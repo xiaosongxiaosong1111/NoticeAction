@@ -1,0 +1,12 @@
+{
+  "name": "notice-action",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test",
+    "coverage": "node --test --experimental-test-coverage",
+    "e2e": "node scripts/browser-smoke.mjs"
+  }
+}

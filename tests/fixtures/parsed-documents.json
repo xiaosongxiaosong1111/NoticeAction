@@ -1,0 +1,85 @@
+[
+  {
+    "document_id": "base_notice",
+    "name": "01_三年级秋季研学通知.pdf",
+    "issued_at": "2026-10-16T00:00:00+08:00",
+    "markdown": "# 三年级秋季自然观察研学活动通知\n活动日期：2026年10月23日；集合时间：上午7:30；集合地点：学校东门；活动地点：青禾自然教育基地；预计返校：下午16:40。\n无论参加与否，均须在2026年10月19日18:00前提交电子回执。参加活动的学生须缴纳活动费用128元/人，缴费截止时间同回执截止时间。\n穿着：秋季校服、运动鞋。个人用品：500mL水杯、轻便雨衣。不得携带：现金、电子游戏设备。",
+    "elements": [
+      {"element_id": "base-title", "page_number": 1, "text": "三年级秋季自然观察研学活动通知"},
+      {"element_id": "base-plan", "page_number": 1, "text": "活动日期：2026年10月23日；集合时间：上午7:30；集合地点：学校东门；活动地点：青禾自然教育基地；预计返校：下午16:40。"},
+      {"element_id": "base-receipt", "page_number": 1, "text": "无论参加与否，均须在2026年10月19日18:00前提交电子回执。"},
+      {"element_id": "base-fee", "page_number": 1, "text": "参加活动的学生须缴纳活动费用128元/人，缴费截止时间同回执截止时间。"},
+      {"element_id": "base-items", "page_number": 2, "text": "穿着：秋季校服、运动鞋。个人用品：500mL水杯、轻便雨衣。不得携带：现金、电子游戏设备。"}
+    ]
+  },
+  {
+    "document_id": "group_table",
+    "name": "02_研学分组与物资表.xlsx",
+    "issued_at": "2026-10-16T00:01:00+08:00",
+    "markdown": "|组别|成员|物资|数量|负责方式|\n|第1组|赵青禾、钱一诺|放大镜|2个/组|赵青禾家庭|\n|第2组|周星野、孙可欣|A4记录夹|1个/人|每人自带|\n|第3组|林小满、吴初夏|蓝色帽子|1顶/人|每人自带|\n|||加厚垃圾袋|2只/组|林小满家庭|\n|第4组|郑麦冬、王南乔|野餐垫|1张/组|王南乔家庭|",
+    "elements": [
+      {
+        "element_id": "group-table",
+        "page_number": 1,
+        "text": "|组别|成员|物资|数量|负责方式|\n|第1组|赵青禾、钱一诺|放大镜|2个/组|赵青禾家庭|\n|第2组|周星野、孙可欣|A4记录夹|1个/人|每人自带|\n|第3组|林小满、吴初夏|蓝色帽子|1顶/人|每人自带|\n|||加厚垃圾袋|2只/组|林小满家庭|\n|第4组|郑麦冬、王南乔|野餐垫|1张/组|王南乔家庭|",
+        "table_structure": {
+          "rows": 6,
+          "cols": 5,
+          "cells": [
+            {"cell_id": "h1", "row": 1, "col": 1, "row_span": 1, "col_span": 1, "text": "组别"},
+            {"cell_id": "h2", "row": 1, "col": 2, "row_span": 1, "col_span": 1, "text": "成员"},
+            {"cell_id": "h3", "row": 1, "col": 3, "row_span": 1, "col_span": 1, "text": "物资"},
+            {"cell_id": "h4", "row": 1, "col": 4, "row_span": 1, "col_span": 1, "text": "数量"},
+            {"cell_id": "h5", "row": 1, "col": 5, "row_span": 1, "col_span": 1, "text": "负责方式"},
+            {"cell_id": "g1", "row": 2, "col": 1, "row_span": 1, "col_span": 1, "text": "第1组"},
+            {"cell_id": "g1m", "row": 2, "col": 2, "row_span": 1, "col_span": 1, "text": "赵青禾、钱一诺"},
+            {"cell_id": "g1i", "row": 2, "col": 3, "row_span": 1, "col_span": 1, "text": "放大镜"},
+            {"cell_id": "g1q", "row": 2, "col": 4, "row_span": 1, "col_span": 1, "text": "2个/组"},
+            {"cell_id": "g1o", "row": 2, "col": 5, "row_span": 1, "col_span": 1, "text": "赵青禾家庭"},
+            {"cell_id": "g2", "row": 3, "col": 1, "row_span": 1, "col_span": 1, "text": "第2组"},
+            {"cell_id": "g2m", "row": 3, "col": 2, "row_span": 1, "col_span": 1, "text": "周星野、孙可欣"},
+            {"cell_id": "g2i", "row": 3, "col": 3, "row_span": 1, "col_span": 1, "text": "A4记录夹"},
+            {"cell_id": "g2q", "row": 3, "col": 4, "row_span": 1, "col_span": 1, "text": "1个/人"},
+            {"cell_id": "g2o", "row": 3, "col": 5, "row_span": 1, "col_span": 1, "text": "每人自带"},
+            {"cell_id": "g3", "row": 4, "col": 1, "row_span": 2, "col_span": 1, "text": "第3组"},
+            {"cell_id": "g3m", "row": 4, "col": 2, "row_span": 2, "col_span": 1, "text": "林小满、吴初夏"},
+            {"cell_id": "g3hat", "row": 4, "col": 3, "row_span": 1, "col_span": 1, "text": "蓝色帽子"},
+            {"cell_id": "g3hatq", "row": 4, "col": 4, "row_span": 1, "col_span": 1, "text": "1顶/人"},
+            {"cell_id": "g3hato", "row": 4, "col": 5, "row_span": 1, "col_span": 1, "text": "每人自带"},
+            {"cell_id": "g3bag", "row": 5, "col": 3, "row_span": 1, "col_span": 1, "text": "加厚垃圾袋"},
+            {"cell_id": "g3bagq", "row": 5, "col": 4, "row_span": 1, "col_span": 1, "text": "2只/组"},
+            {"cell_id": "g3bago", "row": 5, "col": 5, "row_span": 1, "col_span": 1, "text": "林小满家庭"},
+            {"cell_id": "g4", "row": 6, "col": 1, "row_span": 1, "col_span": 1, "text": "第4组"},
+            {"cell_id": "g4m", "row": 6, "col": 2, "row_span": 1, "col_span": 1, "text": "郑麦冬、王南乔"},
+            {"cell_id": "g4i", "row": 6, "col": 3, "row_span": 1, "col_span": 1, "text": "野餐垫"},
+            {"cell_id": "g4q", "row": 6, "col": 4, "row_span": 1, "col_span": 1, "text": "1张/组"},
+            {"cell_id": "g4o", "row": 6, "col": 5, "row_span": 1, "col_span": 1, "text": "王南乔家庭"}
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "document_id": "teacher_adjustment",
+    "name": "03_班主任补充说明.png",
+    "issued_at": "2026-10-18T18:26:00+08:00",
+    "markdown": "2026年10月18日\n班主任王老师 18:26\n集合地点由“学校东门”改为“体育馆北门”。第3组物资调整：蓝色帽子照常携带，加厚垃圾袋不用准备。请于今晚21:00前在群接龙确认收到。其他安排不变。\n林小满家长18:31\n收到",
+    "elements": [
+      {"element_id": "adjust-date", "page_number": 1, "text": "2026年10月18日"},
+      {"element_id": "adjust-message", "page_number": 1, "text": "集合地点由“学校东门”改为“体育馆北门”。第3组物资调整：蓝色帽子照常携带，加厚垃圾袋不用准备。请于今晚21:00前在群接龙确认收到。其他安排不变。"},
+      {"element_id": "adjust-parent", "page_number": 1, "text": "林小满家长18:31\n收到"}
+    ]
+  },
+  {
+    "document_id": "weather_reschedule",
+    "name": "04_天气变更通知.png",
+    "issued_at": "2026-10-22T16:05:00+08:00",
+    "markdown": "2026年10月22日\n班主任王老师 16:05\n【研学改期】因强降雨，原定10月23日（周五）的研学活动改为10月26日（周一）。集合时间由7:30改为8:00，集合地点仍为体育馆北门。返校时间16:40、活动地点和其他准备要求不变。已交回执和费用无需重复提交。不能参加改期活动的，请在10月25日12:00前私聊我。\n吴初夏家长 16:08\n蓝色帽子还带吗？\n班主任王老师 16:10\n带。第3组仍按10月18日的调整执行。",
+    "elements": [
+      {"element_id": "weather-date", "page_number": 1, "text": "2026年10月22日"},
+      {"element_id": "weather-message", "page_number": 1, "text": "【研学改期】因强降雨，原定10月23日（周五）的研学活动改为10月26日（周一）。集合时间由7:30改为8:00，集合地点仍为体育馆北门。返校时间16:40、活动地点和其他准备要求不变。已交回执和费用无需重复提交。不能参加改期活动的，请在10月25日12:00前私聊我。"},
+      {"element_id": "weather-question", "page_number": 1, "text": "吴初夏家长 16:08\n蓝色帽子还带吗？"},
+      {"element_id": "weather-reply", "page_number": 1, "text": "班主任王老师 16:10\n带。第3组仍按10月18日的调整执行。"}
+    ]
+  }
+]

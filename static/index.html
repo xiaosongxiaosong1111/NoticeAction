@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f3f6f3">
+    <title>家校通知行动中枢</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">跳到主要内容</a>
+
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="主要导航">
+        <a class="brand" href="#dashboard" data-view="dashboard" aria-label="家校通知行动中枢首页">
+          <span class="brand-mark" aria-hidden="true">知</span>
+          <span><strong>通知行动中枢</strong><small>家校信息，一处看清</small></span>
+        </a>
+
+        <nav class="primary-nav" aria-label="工作区">
+          <button class="nav-item is-current" type="button" data-view="dashboard" aria-current="page">
+            <span class="nav-icon" aria-hidden="true">总</span><span>总览</span>
+          </button>
+          <button class="nav-item" type="button" data-view="upload">
+            <span class="nav-icon" aria-hidden="true">1</span><span>上传通知</span>
+          </button>
+          <button class="nav-item" type="button" data-view="confirm" disabled>
+            <span class="nav-icon" aria-hidden="true">2</span><span>确认变化</span><span id="nav-change-count" class="nav-count" hidden>0</span>
+          </button>
+          <button class="nav-item" type="button" data-view="plan" disabled>
+            <span class="nav-icon" aria-hidden="true">3</span><span>行动清单</span>
+          </button>
+          <button class="nav-item" type="button" data-view="evidence" disabled>
+            <span class="nav-icon" aria-hidden="true">据</span><span>查看依据</span>
+          </button>
+        </nav>
+
+        <div class="sidebar-note">
+          <span class="signal" aria-hidden="true"></span>
+          <strong>本地保存结果</strong>
+          <small>原文件交由 TextIn xParse 解析，本应用不保存原文件</small>
+        </div>
+      </aside>
+
+      <div class="app-main">
+        <header class="topbar">
+          <a class="mobile-brand" href="#dashboard" data-view="dashboard">
+            <span class="brand-mark" aria-hidden="true">知</span>
+            <strong>通知行动中枢</strong>
+          </a>
+          <div class="topbar-context">
+            <span id="current-family">尚未选择家庭</span>
+            <span id="service-status" class="service-status" role="status">
+              <span aria-hidden="true">●</span> 正在检查服务
+            </span>
+          </div>
+          <button id="help-button" class="topbar-help" type="button" aria-haspopup="dialog">
+            <span aria-hidden="true">?</span> 怎么使用
+          </button>
+          <button id="new-notice-button" class="button button-primary compact-button" type="button">
+            <span aria-hidden="true">＋</span> 新建整理
+          </button>
+        </header>
+
+        <main id="main-content" class="main-content">
+          <div id="global-message" class="message" role="alert" hidden></div>
+
+          <section id="view-dashboard" class="app-view dashboard-view" aria-labelledby="dashboard-title">
+            <div class="page-heading">
+              <div>
+                <p class="eyebrow">把通知变成行动</p>
+                <h1 id="dashboard-title" tabindex="-1">多份通知，只留下你该做的</h1>
+                <p>把同一活动的通知、表格和群聊截图交给系统，确认变化后得到一份有依据的行动清单。</p>
+              </div>
+            </div>
+
+            <section id="dashboard-empty" class="onboarding-shell" aria-labelledby="onboarding-title">
+              <div class="onboarding-intro">
+                <span class="onboarding-badge">第一次使用 · 约 30 秒</span>
+                <p class="step-kicker">先理解一件事</p>
+                <h2 id="onboarding-title">请放入<strong>同一次活动的全部版本</strong></h2>
+                <p class="onboarding-lead">例如学校先发研学通知，后来在群里改了时间和集合点。系统会找出变化，但最后采用哪一版由你确认。</p>
+                <div class="onboarding-actions">
+                  <button id="quick-demo-button" class="button button-primary" type="button"><span aria-hidden="true">▶</span> 30秒体验研学示例</button>
+                  <button id="dashboard-start-button" class="button button-ghost" type="button">上传我的材料</button>
+                </div>
+                <p id="demo-safety-note" class="demo-safety-note">示例只在当前页面体验，不会保存或覆盖你的历史。</p>
+              </div>
+
+              <aside id="onboarding-materials" class="onboarding-materials" aria-labelledby="materials-ready-title">
+                <span class="material-stack" aria-hidden="true"><i>PDF</i><i>表</i><i>图</i></span>
+                <div>
+                  <p class="step-kicker">开始前准备</p>
+                  <h3 id="materials-ready-title">同一活动的相关材料</h3>
+                  <div class="material-tags" aria-label="建议准备的材料">
+                    <span>学校通知</span><span>分组表</span><span>群聊截图</span>
+                  </div>
+                  <p>缺一份也能整理；版本越全，越不容易漏掉临时变化。</p>
+                </div>
+              </aside>
+
+              <ol id="onboarding-flow" class="onboarding-flow" aria-label="三步使用流程">
+                <li><span class="flow-number">1</span><div><strong>上传通知</strong><p>把同一活动的 PDF、表格和截图一起放进来。</p></div></li>
+                <li><span class="flow-number">2</span><div><strong>确认变化</strong><p>逐项选择采用或暂不采用，每项都能查看原文片段。</p></div></li>
+                <li><span class="flow-number">3</span><div><strong>照清单行动</strong><p>获得待办和截止时间，活动行程可导出到系统日历。</p></div></li>
+              </ol>
+            </section>
+
+            <div id="dashboard-content" hidden>
+              <div class="metric-grid dashboard-metrics" aria-label="历史数据概览">
+                <article class="metric-card metric-accent"><span>未完成待办</span><strong id="dashboard-active-count">0</strong><small>来自已保存清单</small></article>
+                <article class="metric-card"><span>已确认变化</span><strong id="dashboard-change-count">0</strong><small>保留版本依据</small></article>
+                <article class="metric-card"><span>通知材料</span><strong id="dashboard-document-count">0</strong><small>仅保存文件名称</small></article>
+                <article class="metric-card"><span>活动记录</span><strong id="dashboard-history-count">0</strong><small>保存在当前浏览器</small></article>
+              </div>
+
+              <section class="surface history-surface" aria-labelledby="history-title">
+                <div class="surface-heading">
+                  <div><p class="step-kicker">最近整理</p><h2 id="history-title">通知历史</h2></div>
+                  <div class="history-heading-actions">
+                    <p id="history-summary">还没有保存过行动清单</p>
+                    <button id="clear-history-button" class="text-button danger-text" type="button" hidden>清空本机历史</button>
+                  </div>
+                </div>
+                <div id="history-list" class="history-list" aria-live="polite"></div>
+              </section>
+            </div>
+          </section>
+
+          <section id="step-upload" class="workspace app-view" aria-labelledby="upload-title" hidden>
+            <div class="page-heading compact-heading">
+              <div>
+                <p class="eyebrow">文档收件箱</p>
+                <h1 id="upload-title" tabindex="-1">整理一组新通知</h1>
+                <p>PDF、Excel 与聊天截图可以混合上传，系统会按发布时间比对版本。</p>
+              </div>
+              <ol class="mini-steps" aria-label="处理进度">
+                <li class="is-current" data-step-indicator="1" aria-current="step"><span>1</span>上传</li>
+                <li data-step-indicator="2"><span>2</span>确认</li>
+                <li data-step-indicator="3"><span>3</span>清单</li>
+              </ol>
+            </div>
+
+            <div id="upload-step-goal" class="step-guide" role="note">
+              <span class="step-guide-number" aria-hidden="true">1</span>
+              <div><strong>这一步：收齐同一活动的材料</strong><p>请上传同一场活动的全部版本，包括学校通知、分组表和群聊截图；不要把不同活动混在一起。</p></div>
+            </div>
+
+            <form id="upload-form" class="upload-layout">
+              <section class="surface upload-panel" aria-labelledby="materials-title">
+                <div class="surface-heading inline-heading">
+                  <div><p class="step-kicker">材料队列</p><h2 id="materials-title">放入全部相关通知</h2></div>
+                  <span id="selected-file-count" class="status-pill">0 份材料</span>
+                </div>
+
+                <div class="drop-zone" id="drop-zone">
+                  <input id="notice-files" name="files" type="file" multiple accept=".pdf,.xlsx,.png,.jpg,.jpeg">
+                  <div class="drop-icon" aria-hidden="true"><span></span></div>
+                  <h3>拖放材料到这里</h3>
+                  <p>支持 PDF、XLSX、PNG、JPG · 单份不超过 10 MB</p>
+                  <label for="notice-files" class="button button-secondary">选择本机文件</label>
+                </div>
+
+                <ul id="file-list" class="file-list" aria-live="polite"></ul>
+                <p class="privacy-note"><span aria-hidden="true">◇</span> 真实上传会把原文件发送至 TextIn xParse 完成解析；本应用不保存原文件。请先脱敏并确认有权处理。</p>
+              </section>
+
+              <aside class="surface identity-panel">
+                <div class="surface-heading">
+                  <div><p class="step-kicker">匹配对象</p><h2>这是谁的通知</h2></div>
+                </div>
+                <div class="identity-grid">
+                  <label>孩子姓名<input id="child-name" name="child_name" autocomplete="off" placeholder="例如：林小满" required maxlength="30"></label>
+                  <label>班级<input id="class-name" name="class_name" autocomplete="off" placeholder="例如：三（2）班" required maxlength="30"></label>
+                  <label class="switch-row">
+                    <span><strong>参加本次活动</strong><small>关闭后不生成缴费和参加提醒</small></span>
+                    <input id="participating" name="participating" type="checkbox" role="switch" checked>
+                  </label>
+                </div>
+
+                <div class="demo-callout">
+                  <span class="demo-badge">演示</span>
+                  <strong>还没有材料？</strong>
+                  <p>用 4 份真实 xParse 脱敏结果体验完整流程。</p>
+                  <button id="demo-button" class="button button-ghost" type="button"><span aria-hidden="true">▶</span> 使用研学示例</button>
+                </div>
+
+                <p id="live-mode-note" class="mode-note" role="status">当前仅支持示例体验；要上传自己的材料，请用 <code>.\start.ps1 -Live</code> 重新启动。</p>
+                <button id="analyze-button" class="button button-primary full-button" type="submit" disabled>下一步：找出变化</button>
+              </aside>
+            </form>
+          </section>
+
+          <section id="step-confirm" class="workspace app-view" aria-labelledby="confirm-title" hidden>
+            <div class="page-heading compact-heading">
+              <div>
+                <p class="eyebrow">变更雷达</p>
+                <h1 id="confirm-title" tabindex="-1">逐项确认最新安排</h1>
+                <p>系统只提出有原文依据的变化，最终采用哪个版本由你决定。</p>
+              </div>
+              <ol class="mini-steps" aria-label="处理进度">
+                <li class="is-done" data-step-indicator="1"><span>✓</span>上传</li>
+                <li class="is-current" data-step-indicator="2" aria-current="step"><span>2</span>确认</li>
+                <li data-step-indicator="3"><span>3</span>清单</li>
+              </ol>
+            </div>
+
+            <div id="decision-guide" class="step-guide" role="note">
+              <span class="step-guide-number" aria-hidden="true">2</span>
+              <div><strong>这一步：决定最后采用哪一版</strong><p>“按新通知执行”会采用新版，“仍按旧通知执行”会继续使用旧版；拿不准先看原文片段。</p></div>
+            </div>
+
+            <div class="review-layout">
+              <div class="review-stream">
+                <div id="event-preview" class="event-preview"></div>
+                <div class="section-label">
+                  <div><p class="step-kicker">版本比对</p><h2>发现的变化</h2></div>
+                  <span id="change-summary-pill" class="status-pill">0 项</span>
+                </div>
+                <div id="change-list" class="change-list"></div>
+              </div>
+
+              <aside class="review-sidebar" aria-labelledby="review-progress-title">
+                <section class="surface review-progress">
+                  <p class="step-kicker">审核进度</p>
+                  <div class="progress-copy"><h2 id="review-progress-title">等待确认</h2><strong id="review-progress-text">0 / 0</strong></div>
+                  <progress id="review-progress-bar" class="progress-track" max="100" value="0" aria-label="审核完成比例">0%</progress>
+
+                  <fieldset id="receipt-confirmation" class="submission-check" hidden>
+                    <legend>电子回执</legend>
+                    <p>“无需重复提交”不能证明已经完成。</p>
+                    <div class="choice-grid">
+                      <label><input type="radio" name="submission-receipt" value="submitted"><span><b>已经提交</b><small>不列入待办</small></span></label>
+                      <label><input type="radio" name="submission-receipt" value="not_submitted"><span><b>还未提交</b><small>保留为待办</small></span></label>
+                    </div>
+                  </fieldset>
+
+                  <fieldset id="payment-confirmation" class="submission-check" hidden>
+                    <legend id="payment-title">活动费</legend>
+                    <p>缴费状态单独确认，不从回执推断。</p>
+                    <div class="choice-grid">
+                      <label><input type="radio" name="submission-payment" value="submitted"><span><b>已经缴费</b><small>不列入待办</small></span></label>
+                      <label><input type="radio" name="submission-payment" value="not_submitted"><span><b>还未缴费</b><small>保留为待办</small></span></label>
+                    </div>
+                  </fieldset>
+
+                  <p id="finalize-reason" class="disabled-reason" role="status">请先确认全部变化</p>
+                  <button id="finalize-button" class="button button-primary full-button" type="button" disabled>生成行动清单</button>
+                  <button id="back-button" class="button button-ghost full-button" type="button">返回收件箱</button>
+                </section>
+              </aside>
+            </div>
+          </section>
+
+          <section id="step-plan" class="workspace app-view" aria-labelledby="plan-title" hidden>
+            <div class="page-heading compact-heading">
+              <div>
+                <p class="eyebrow">行动中心</p>
+                <h1 id="plan-title" tabindex="-1">一份清单，照着完成</h1>
+                <p>任务状态会保存在当前浏览器，刷新页面也不会丢失。</p>
+              </div>
+              <ol class="mini-steps" aria-label="处理进度">
+                <li class="is-done" data-step-indicator="1"><span>✓</span>上传</li>
+                <li class="is-done" data-step-indicator="2"><span>✓</span>确认</li>
+                <li class="is-current" data-step-indicator="3" aria-current="step"><span>3</span>清单</li>
+              </ol>
+            </div>
+
+            <div id="result-next-actions" class="step-guide result-guide" role="note">
+              <span class="step-guide-number" aria-hidden="true">3</span>
+              <div><strong>接下来：按清单完成并勾选</strong><p>先做“现在要做”，活动时间可加入系统日历；拿不准时查看证据出处。</p></div>
+            </div>
+
+            <div class="metric-grid action-metrics" aria-label="行动清单概览">
+              <article class="metric-card metric-accent"><span>现在要做</span><strong id="metric-active">0</strong><small>尚未完成</small></article>
+              <article class="metric-card"><span>条件待办</span><strong id="metric-conditional">0</strong><small>符合条件才做</small></article>
+              <article class="metric-card metric-success"><span>已经完成</span><strong id="metric-done">0</strong><small>包括手动勾选</small></article>
+              <article class="metric-card metric-muted"><span>已经取消</span><strong id="metric-cancelled">0</strong><small>保留变更记录</small></article>
+            </div>
+
+            <div class="action-layout">
+              <div id="plan-groups" class="plan-groups"></div>
+              <aside class="action-context">
+                <div id="final-event" class="final-event"></div>
+                <div class="context-actions">
+                  <button id="ics-button" class="button button-secondary full-button" type="button"><span aria-hidden="true">↓</span> 加入系统日历</button>
+                  <button class="button button-ghost full-button" type="button" data-view="evidence">查看全部证据</button>
+                  <button id="restart-button" class="button button-ghost full-button" type="button">整理另一组通知</button>
+                </div>
+              </aside>
+            </div>
+
+            <section class="surface timeline-surface" aria-labelledby="timeline-title">
+              <div class="surface-heading inline-heading">
+                <div><p class="step-kicker">版本时间线</p><h2 id="timeline-title">这份清单采用了哪些变化</h2></div>
+                <span id="timeline-count" class="status-pill">0 项变化</span>
+              </div>
+              <div id="change-timeline" class="change-timeline"></div>
+            </section>
+          </section>
+
+          <section id="view-evidence" class="app-view evidence-view" aria-labelledby="evidence-center-title" hidden>
+            <div class="page-heading">
+              <div>
+                <p class="eyebrow">证据中心</p>
+                <h1 id="evidence-center-title" tabindex="-1">每条结论，都能回到原文</h1>
+                <p>按来源材料汇总引用片段。这里只保存文件名、页码和必要原文，不保存原始文件。</p>
+              </div>
+            </div>
+            <div id="evidence-empty" class="surface empty-dashboard">
+              <h3>还没有可以查看的证据</h3>
+              <p>完成一次通知整理后，日期、地点、费用与物品变化都会在这里留下来源。</p>
+              <button class="button button-secondary" type="button" data-view="upload">前往文档收件箱</button>
+            </div>
+            <div id="evidence-list" class="evidence-library"></div>
+          </section>
+        </main>
+
+        <footer class="app-footer"><p>结论有据可查，变化由你确认。</p><p>Powered by TextIn xParse</p></footer>
+      </div>
+    </div>
+
+    <nav class="mobile-nav" aria-label="移动端导航">
+      <button class="is-current" type="button" data-view="dashboard" aria-current="page"><span aria-hidden="true">总</span>总览</button>
+      <button type="button" data-view="upload"><span aria-hidden="true">1</span>上传</button>
+      <button type="button" data-view="confirm" disabled><span aria-hidden="true">2</span>确认</button>
+      <button type="button" data-view="plan" disabled><span aria-hidden="true">3</span>清单</button>
+      <button type="button" data-view="evidence" disabled><span aria-hidden="true">据</span>依据</button>
+    </nav>
+
+    <dialog id="help-dialog" aria-labelledby="help-title">
+      <div class="dialog-heading">
+        <div><p class="step-kicker">使用指南</p><h2 id="help-title">三步把通知变成行动</h2></div>
+        <button id="help-close" class="icon-button" type="button" aria-label="关闭使用指南">×</button>
+      </div>
+      <div class="help-guide">
+        <section>
+          <span class="help-label">解决什么</span>
+          <h3>通知反复修改，不再靠记忆猜最新版</h3>
+          <p>系统比对同一活动的多个版本，把时间、地点、费用和物品变化整理给你确认。</p>
+        </section>
+        <section>
+          <span class="help-label">准备材料</span>
+          <div class="material-tags"><span>学校通知</span><span>分组表</span><span>群聊截图</span></div>
+        </section>
+        <ol aria-label="使用步骤">
+          <li><span>1</span><div><strong>上传</strong><p>一次放入同一活动的全部版本。</p></div></li>
+          <li><span>2</span><div><strong>确认</strong><p>逐项决定采用哪版，随时查看原文片段。</p></div></li>
+          <li><span>3</span><div><strong>行动</strong><p>按待办清单完成，活动行程可导出到系统日历。</p></div></li>
+        </ol>
+        <section class="help-result">
+          <span class="help-label">最终得到</span>
+          <p><strong>唯一行动清单</strong>，包含截止时间、条件待办、完成状态和每条结论的原文片段出处。</p>
+        </section>
+      </div>
+      <div class="help-actions">
+        <button id="help-demo-button" class="button button-primary" type="button"><span aria-hidden="true">▶</span> 30秒体验示例</button>
+        <button id="help-start-button" class="button button-ghost" type="button">上传我的材料</button>
+      </div>
+      <p class="help-safety-note">示例不会写入你的历史记录。</p>
+    </dialog>
+
+    <dialog id="evidence-dialog" aria-labelledby="evidence-title">
+      <div class="dialog-heading">
+        <div><p class="step-kicker">原文依据</p><h2 id="evidence-title">这条结论从哪里来</h2></div>
+        <button id="dialog-close" class="icon-button" type="button" aria-label="关闭证据面板">×</button>
+      </div>
+      <div id="evidence-content" class="evidence-content"></div>
+      <button id="dialog-done" class="button button-primary dialog-done" type="button">看完了</button>
+    </dialog>
+  </body>
+</html>
