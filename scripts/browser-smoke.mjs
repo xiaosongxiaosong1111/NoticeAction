@@ -403,12 +403,26 @@ try {
     return true;
   })()`);
   await waitFor(client, "window.__raceStarted");
-  await evaluate(client, "document.querySelector('#back-button').click(); true");
-  await waitFor(client, "!document.querySelector('#step-upload').hidden");
+  await evaluate(client, "document.querySelector('.primary-nav [data-view=\"dashboard\"]').click(); true");
+  await waitFor(client, "!document.querySelector('#view-dashboard').hidden");
+  assert.equal(await evaluate(client, "window.__raceAborted"), true);
   await evaluate(client, "window.__releaseFinalize(); true");
   await waitFor(client, "window.__raceFinished");
+  await evaluate(client, "document.querySelector('.primary-nav [data-view=\"confirm\"]').click(); true");
+  await waitFor(client, "!document.querySelector('#step-confirm').hidden");
+  assert.equal(await evaluate(client, "document.querySelector('#finalize-button').disabled"), false);
   assert.deepEqual(await evaluate(client, "({ aborted: window.__raceAborted, historyUntouched: localStorage.getItem('notice-action.history.v1') === window.__historyBeforeRace, quiet: !document.querySelector('#global-message').textContent.includes('Aborted') })"), {
     aborted: true,
+    historyUntouched: true,
+    quiet: true,
+  });
+  await evaluate(client, "window.__raceStarted = false; window.__raceAborted = false; window.__raceFinished = false; document.querySelector('#finalize-button').click(); true");
+  await waitFor(client, "window.__raceStarted");
+  assert.equal(await evaluate(client, "window.confirm = () => true; document.querySelector('#help-button').click(); document.querySelector('#help-demo-button').click(); window.__raceAborted"), true);
+  await evaluate(client, "window.__releaseFinalize(); true");
+  await waitFor(client, "window.__raceFinished");
+  await waitFor(client, "!document.querySelector('#step-confirm').hidden");
+  assert.deepEqual(await evaluate(client, "({ historyUntouched: localStorage.getItem('notice-action.history.v1') === window.__historyBeforeRace, quiet: !document.querySelector('#global-message').textContent.includes('Aborted') })"), {
     historyUntouched: true,
     quiet: true,
   });

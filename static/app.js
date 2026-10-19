@@ -422,6 +422,7 @@ async function loadDemo(trigger) {
     : { name: '林小满', className: '三（2）班', participating: true };
   const hasDraft = state.files.length > 0 || (state.analysis && !state.plan);
   if (hasDraft && !window.confirm('体验示例会放弃当前未完成的材料和确认进度，是否继续？')) return;
+  newWorkflow();
   if (helpDialog.open) {
     restoreHelpFocus = false;
     await new Promise((resolve) => {
@@ -429,7 +430,6 @@ async function loadDemo(trigger) {
       helpDialog.close();
     });
   }
-  newWorkflow();
   const { revision, signal } = beginOperation();
   $('#child-name').value = profile.name;
   $('#class-name').value = profile.className;
@@ -883,7 +883,10 @@ function newWorkflow() {
 for (const control of document.querySelectorAll('[data-view]')) {
   control.addEventListener('click', (event) => {
     event.preventDefault();
-    if (state.operationActive) renewWorkflow();
+    if (state.operationActive) {
+      renewWorkflow();
+      if (state.analysis) updateFinalizeState();
+    }
     goToView(control.dataset.view);
   });
 }
@@ -904,10 +907,8 @@ helpButton.addEventListener('click', () => {
 $('#help-close').addEventListener('click', () => helpDialog.close());
 $('#help-start-button').addEventListener('click', () => {
   restoreHelpFocus = false;
-  helpAfterClose = () => {
-    newWorkflow();
-    requestAnimationFrame(() => $('#upload-title').focus({ preventScroll: true }));
-  };
+  newWorkflow();
+  helpAfterClose = () => requestAnimationFrame(() => $('#upload-title').focus({ preventScroll: true }));
   helpDialog.close();
 });
 helpDialog.addEventListener('click', (event) => {
