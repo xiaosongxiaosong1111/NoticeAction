@@ -12,7 +12,7 @@ if (-not $Live) {
 }
 
 $appId = Read-Host 'TextIn AppID'
-$secureSecret = Read-Host 'TextIn Secret Code（输入不可见）' -AsSecureString
+$secureSecret = Read-Host 'TextIn Secret Code (input hidden)' -AsSecureString
 $secretPointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureSecret)
 try {
   $env:TEXTIN_APP_ID = $appId
