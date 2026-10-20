@@ -76,6 +76,7 @@ async function waitFor(client, expression, timeoutMs = 8_000) {
 }
 
 async function screenshot(client, name) {
+  await new Promise((accept) => setTimeout(accept, 250));
   const metrics = await client.send('Page.getLayoutMetrics');
   const { contentSize } = metrics;
   const capture = await client.send('Page.captureScreenshot', {
@@ -102,14 +103,134 @@ const chrome = spawn(chromePath, [
 let client;
 try {
   await waitForJson(`http://127.0.0.1:${debugPort}/json/version`);
-  const target = await fetch(`http://127.0.0.1:${debugPort}/json/new?${encodeURIComponent(origin)}`, { method: 'PUT' }).then((response) => response.json());
+  const target = await fetch(`http://127.0.0.1:${debugPort}/json/new?${encodeURIComponent('about:blank')}`, { method: 'PUT' }).then((response) => response.json());
   client = cdpClient(target.webSocketDebuggerUrl);
   await client.send('Page.enable');
   await client.send('Runtime.enable');
   await client.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  await client.send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => {
+    const nativeFetch = window.fetch.bind(window);
+    const credentialState = { configured: false, saved: false };
+    window.__credentialApiState = credentialState;
+    window.__credentialApiPayload = null;
+    window.__incrementalParseCalls = 0;
+    window.__incrementalMergePayloads = [];
+    window.__incrementalFinalizePayloads = [];
+    const json = (body) => Promise.resolve(new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    window.fetch = (url, options = {}) => {
+      const path = new URL(String(url), window.location.href).pathname;
+      if (path === '/api/health') {
+        const capability = new URL(window.location.href).searchParams.has('legacy_health') ? {} : {
+          credential_management_version: 1,
+          credential_storage_available: true,
+          credential_storage_error: false,
+        };
+        return json({
+          ok: true,
+          ...capability,
+          live_parse_configured: credentialState.configured,
+          credentials_saved: credentialState.saved,
+        });
+      }
+      if (path === '/api/credentials/clear') {
+        const completeClear = () => {
+          credentialState.configured = false;
+          credentialState.saved = false;
+          window.__credentialApiPayload = null;
+          return json({ ok: true, credential_management_version: 1, credential_storage_available: true, credential_storage_error: false, live_parse_configured: false, credentials_saved: false });
+        };
+        if (window.__holdCredentialClear) {
+          return new Promise((resolve) => { window.__releaseCredentialClear = () => resolve(completeClear()); });
+        }
+        return completeClear();
+      }
+      if (path === '/api/credentials') {
+        if (window.__failCredentialSave) {
+          window.__credentialFailureIntercepted = true;
+          return Promise.resolve(new Response(JSON.stringify({ ok: false, error: { message: '加密存储暂时不可用' } }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json' },
+          }));
+        }
+        window.__credentialApiPayload = JSON.parse(options.body || '{}');
+        credentialState.configured = true;
+        credentialState.saved = true;
+        return json({ ok: true, credential_management_version: 1, credential_storage_available: true, credential_storage_error: false, live_parse_configured: true, credentials_saved: true });
+      }
+      if (path === '/api/parse' && window.__rejectParseCredentials) {
+        return Promise.resolve(new Response(JSON.stringify({
+          ok: false,
+          error: {
+            code: 'TEXTIN_CREDENTIALS_INVALID',
+            message: 'TextIn 拒绝了当前 AppID / Secret Code。请在“解析设置”中重新保存工作台里的最新凭据。',
+          },
+        }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        }));
+      }
+      if (path === '/api/parse' && window.__mockIncrementalUpload) {
+        const parseCall = ++window.__incrementalParseCalls;
+        const filename = new URL(String(url), window.location.href).searchParams.get('filename') || '通知材料';
+        return options.body.arrayBuffer().then((buffer) => {
+          let hash = Array.from(filename).reduce((value, character) => ((value * 31) + character.codePointAt(0)) >>> 0, 0);
+          for (const byte of new Uint8Array(buffer)) hash = ((hash * 31) + byte) >>> 0;
+          return json({
+            ok: true,
+            document: {
+              document_id: 'incremental-' + hash.toString(16),
+              name: filename,
+              issued_at: '2026-10-' + String(20 + parseCall).padStart(2, '0') + 'T09:00:00+08:00',
+              markdown: filename,
+              elements: [{ element_id: 'element-' + parseCall, page_number: 1, text: filename }],
+            },
+          });
+        });
+      }
+      if (path === '/api/merge' && window.__mockIncrementalUpload) {
+        const payload = JSON.parse(options.body || '{}');
+        window.__incrementalMergePayloads.push(payload);
+        return nativeFetch('/api/demo?child_name=' + encodeURIComponent('林小满') + '&participating=true')
+          .then((response) => response.json())
+          .then((body) => {
+            const incremental = payload.documents.length > 1;
+            const currentEvent = payload.context.current_event || {};
+            const event = incremental
+              ? { ...body.analysis.event, meet_location: '图书馆门口' }
+              : body.analysis.event;
+            const changes = incremental
+              ? body.analysis.changes.map((change) => {
+                  if (change.id === 'event_date') return { ...change, before: currentEvent.date, after: event.date };
+                  if (change.id === 'meet_time') return { ...change, before: currentEvent.meet_time, after: event.meet_time };
+                  if (change.id === 'meet_location') return { ...change, before: currentEvent.meet_location, after: event.meet_location };
+                  return change;
+                })
+              : body.analysis.changes;
+            return json({
+              ...body,
+              analysis: {
+                ...body.analysis,
+                event,
+                changes,
+                documents: payload.documents.map(({ document_id, name, issued_at }) => ({ document_id, name, issued_at })),
+                summary: { ...body.analysis.summary, document_count: payload.documents.length },
+              },
+            });
+          });
+      }
+      if (path === '/api/finalize' && window.__mockIncrementalUpload) {
+        window.__incrementalFinalizePayloads.push(JSON.parse(options.body || '{}'));
+      }
+      return nativeFetch(url, options);
+    };
+  })();` });
+  await client.send('Page.navigate', { url: origin });
   await waitFor(client, "document.readyState === 'complete'");
   await waitFor(client, "document.querySelector('#service-status')?.textContent.includes('示例模式可用')");
-  const emptyDashboard = await evaluate(client, "({ visible: !document.querySelector('#view-dashboard').hidden, empty: !document.querySelector('#dashboard-empty').hidden, onboardingSteps: document.querySelectorAll('#onboarding-flow li').length, materialsReady: ['学校通知', '分组表', '群聊截图'].every((word) => document.querySelector('#onboarding-materials').textContent.includes(word)), quickDemoVisible: Boolean(document.querySelector('#quick-demo-button').offsetParent), demoSafe: document.querySelector('#demo-safety-note').textContent.includes('不会保存'), dashboardDataHidden: document.querySelector('#dashboard-content').hidden, family: document.querySelector('#current-family').textContent, helpVisible: Boolean(document.querySelector('#help-button').offsetParent), currentNav: document.querySelector('.primary-nav [data-view=\"dashboard\"]').getAttribute('aria-current'), overflow: Math.max(0, document.documentElement.scrollWidth - window.innerWidth), analyzeDisabled: document.querySelector('#analyze-button').disabled, liveModeNote: !document.querySelector('#live-mode-note').hidden })");
+  const emptyDashboard = await evaluate(client, "({ visible: !document.querySelector('#view-dashboard').hidden, empty: !document.querySelector('#dashboard-empty').hidden, onboardingSteps: document.querySelectorAll('#onboarding-flow li').length, materialsReady: ['学校通知', '分组表', '群聊截图'].every((word) => document.querySelector('#onboarding-materials').textContent.includes(word)), quickDemoVisible: Boolean(document.querySelector('#quick-demo-button').offsetParent), demoSafe: document.querySelector('#demo-safety-note').textContent.includes('不会保存'), dashboardDataHidden: document.querySelector('#dashboard-content').hidden, family: document.querySelector('#current-family').textContent, settingsVisible: Boolean(document.querySelector('#credentials-button').offsetParent), helpVisible: Boolean(document.querySelector('#help-button').offsetParent), currentNav: document.querySelector('.primary-nav [data-view=\"dashboard\"]').getAttribute('aria-current'), overflow: Math.max(0, document.documentElement.scrollWidth - window.innerWidth), analyzeDisabled: document.querySelector('#analyze-button').disabled, analyzeLabel: document.querySelector('#analyze-button').textContent, liveModeNote: !document.querySelector('#live-mode-note').hidden })");
   assert.deepEqual(emptyDashboard, {
     visible: true,
     empty: true,
@@ -119,13 +240,120 @@ try {
     demoSafe: true,
     dashboardDataHidden: true,
     family: '尚未选择家庭',
+    settingsVisible: true,
     helpVisible: true,
     currentNav: 'page',
     overflow: 0,
     analyzeDisabled: true,
+    analyzeLabel: '下一步：解析并整理',
     liveModeNote: true,
   });
   await screenshot(client, '00-dashboard-empty-desktop.png');
+
+  await evaluate(client, "document.querySelector('#credentials-button').click(); true");
+  await waitFor(client, "document.querySelector('#credentials-dialog').open && document.activeElement.id === 'credentials-app-id'");
+  assert.deepEqual(await evaluate(client, "({ appId: document.querySelector('#credentials-app-id').value, secret: document.querySelector('#credentials-secret-code').value, formAutocomplete: document.querySelector('#credentials-form').autocomplete, secretAutocomplete: document.querySelector('#credentials-secret-code').autocomplete, encryptedNote: document.querySelector('#credentials-dialog').textContent.includes('Windows DPAPI') && document.querySelector('#credentials-dialog').textContent.includes('当前 Windows 用户') })"), {
+    appId: '',
+    secret: '',
+    formAutocomplete: 'off',
+    secretAutocomplete: 'off',
+    encryptedNote: true,
+  });
+  await evaluate(client, `(() => {
+    document.querySelector('#credentials-app-id').value = 'browser-test-app';
+    document.querySelector('#credentials-secret-code').value = 'browser-test-secret';
+    document.querySelector('#credentials-form').requestSubmit();
+    return true;
+  })()`);
+  await waitFor(client, "!document.querySelector('#credentials-dialog').open && document.querySelector('#service-status').textContent.includes('在线解析已就绪')");
+  await waitFor(client, "document.activeElement.id === 'credentials-button'");
+  assert.deepEqual(await evaluate(client, `({
+    requestShape: Object.keys(window.__credentialApiPayload || {}).sort().join(','),
+    configured: window.__credentialApiState.configured,
+    analyzeEnabled: !document.querySelector('#analyze-button').disabled,
+    noteHidden: document.querySelector('#live-mode-note').hidden,
+    fieldsCleared: document.querySelector('#credentials-app-id').value === '' && document.querySelector('#credentials-secret-code').value === '',
+    noSecretInDom: !document.documentElement.outerHTML.includes('browser-test-secret'),
+    noSecretInStorage: !Object.values(localStorage).some((value) => value.includes('browser-test-secret')),
+    focusRestored: document.activeElement.id === 'credentials-button',
+  })`), {
+    requestShape: 'app_id,secret_code',
+    configured: true,
+    analyzeEnabled: true,
+    noteHidden: true,
+    fieldsCleared: true,
+    noSecretInDom: true,
+    noSecretInStorage: true,
+    focusRestored: true,
+  });
+  await evaluate(client, `(() => {
+    document.querySelector('#dashboard-start-button').click();
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(['%PDF-1.7'], 'invalid-credentials.pdf', { type: 'application/pdf' }));
+    const input = document.querySelector('#notice-files');
+    input.files = transfer.files;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    document.querySelector('#child-name').value = '林小满';
+    document.querySelector('#class-name').value = '三（2）班';
+    window.__rejectParseCredentials = true;
+    document.querySelector('#upload-form').requestSubmit();
+    return true;
+  })()`);
+  await waitFor(client, "document.querySelector('#credentials-dialog').open && document.querySelector('#credentials-status').classList.contains('is-error')");
+  assert.deepEqual(await evaluate(client, `({
+    settingsMessage: document.querySelector('#credentials-status').textContent,
+    globalMessage: document.querySelector('#global-message').textContent,
+    fileState: document.querySelector('#file-list .file-state').textContent,
+    fieldsBlank: document.querySelector('#credentials-app-id').value === '' && document.querySelector('#credentials-secret-code').value === '',
+  })`), {
+    settingsMessage: 'TextIn 拒绝了当前 AppID / Secret Code。请在“解析设置”中重新保存工作台里的最新凭据。',
+    globalMessage: 'invalid-credentials.pdf：TextIn 拒绝了当前 AppID / Secret Code。请在“解析设置”中重新保存工作台里的最新凭据。',
+    fileState: '解析失败',
+    fieldsBlank: true,
+  });
+  await evaluate(client, "window.__rejectParseCredentials = false; document.querySelector('#credentials-close').click(); document.querySelector('.primary-nav [data-view=\"dashboard\"]').click(); true");
+  await waitFor(client, "!document.querySelector('#credentials-dialog').open");
+  await evaluate(client, "document.querySelector('#credentials-button').click(); window.confirm = () => true; window.__holdCredentialClear = true; document.querySelector('#credentials-clear').click(); true");
+  await waitFor(client, "document.querySelector('#credentials-clear').textContent.includes('正在清除')");
+  await client.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
+  await client.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
+  assert.deepEqual(await evaluate(client, "({ dialogOpen: document.querySelector('#credentials-dialog').open, saveLabel: document.querySelector('#credentials-save').textContent })"), {
+    dialogOpen: false,
+    saveLabel: '保存并启用',
+  });
+  await evaluate(client, "document.querySelector('#credentials-button').click(); true");
+  await waitFor(client, "document.querySelector('#credentials-dialog').open");
+  assert.equal(await evaluate(client, "document.querySelector('#credentials-save').disabled && document.querySelector('#credentials-clear').disabled"), true);
+  await evaluate(client, "window.__releaseCredentialClear(); true");
+  await waitFor(client, "document.querySelector('#service-status').textContent.includes('示例模式可用')");
+  assert.deepEqual(await evaluate(client, "({ configured: window.__credentialApiState.configured, analyzeDisabled: document.querySelector('#analyze-button').disabled, noteVisible: !document.querySelector('#live-mode-note').hidden, appId: document.querySelector('#credentials-app-id').value, secret: document.querySelector('#credentials-secret-code').value })"), {
+    configured: false,
+    analyzeDisabled: true,
+    noteVisible: true,
+    appId: '',
+    secret: '',
+  });
+  assert.equal(await evaluate(client, "document.querySelector('#credentials-dialog').open && !document.querySelector('#credentials-save').disabled"), true);
+  await client.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
+  await client.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
+  await waitFor(client, "!document.querySelector('#credentials-dialog').open && document.activeElement.id === 'credentials-button'");
+
+  await evaluate(client, "window.__failCredentialSave = true; document.querySelector('#credentials-button').click(); true");
+  await waitFor(client, "document.querySelector('#credentials-dialog').open && !document.querySelector('#credentials-save').disabled");
+  await evaluate(client, `(() => {
+    document.querySelector('#credentials-app-id').value = 'retry-app';
+    document.querySelector('#credentials-secret-code').value = 'retry-secret';
+    document.querySelector('#credentials-form').requestSubmit();
+    return true;
+  })()`);
+  await waitFor(client, "window.__credentialFailureIntercepted === true");
+  await waitFor(client, "document.querySelector('#credentials-dialog').open && document.querySelector('#credentials-status').classList.contains('is-error')");
+  assert.deepEqual(await evaluate(client, "({ message: document.querySelector('#credentials-status').textContent, saveEnabled: !document.querySelector('#credentials-save').disabled })"), {
+    message: '加密存储暂时不可用',
+    saveEnabled: true,
+  });
+  await evaluate(client, "window.__failCredentialSave = false; document.querySelector('#credentials-close').click(); true");
+  await waitFor(client, "!document.querySelector('#credentials-dialog').open && document.activeElement.id === 'credentials-button'");
 
   await evaluate(client, "document.querySelector('#help-button').click(); true");
   await waitFor(client, "document.querySelector('#help-dialog').open");
@@ -141,22 +369,29 @@ try {
   await waitFor(client, "!document.querySelector('#help-dialog').open");
   await waitFor(client, "document.activeElement.id === 'help-button'");
   await evaluate(client, "document.querySelector('#help-button').click(); document.querySelector('#help-start-button').click(); true");
+  await waitFor(client, "document.querySelector('#discard-dialog').open");
+  await evaluate(client, "document.querySelector('#discard-confirm').click(); true");
   await waitFor(client, "!document.querySelector('#step-upload').hidden");
   await waitFor(client, "document.activeElement.id === 'upload-title'");
   await evaluate(client, "document.querySelector('.primary-nav [data-view=\"dashboard\"]').click(); true");
 
   await client.send('Emulation.setDeviceMetricsOverride', { width: 360, height: 800, deviceScaleFactor: 1, mobile: true });
-  assert.deepEqual(await evaluate(client, "({ overflow: document.documentElement.scrollWidth - window.innerWidth, steps: document.querySelectorAll('#onboarding-flow li').length, minButtonHeight: Math.min(...[...document.querySelectorAll('button:not([hidden])')].filter((button) => button.offsetParent).map((button) => button.getBoundingClientRect().height)), helpVisible: Boolean(document.querySelector('#help-button').offsetParent) })"), { overflow: 0, steps: 3, minButtonHeight: 44, helpVisible: true });
+  assert.deepEqual(await evaluate(client, "({ overflow: document.documentElement.scrollWidth - window.innerWidth, steps: document.querySelectorAll('#onboarding-flow li').length, minButtonHeight: Math.min(...[...document.querySelectorAll('button:not([hidden])')].filter((button) => button.offsetParent).map((button) => button.getBoundingClientRect().height)), settingsVisible: Boolean(document.querySelector('#credentials-button').offsetParent), settingsLabel: document.querySelector('#credentials-button').getAttribute('aria-label'), helpVisible: Boolean(document.querySelector('#help-button').offsetParent) })"), { overflow: 0, steps: 3, minButtonHeight: 44, settingsVisible: true, settingsLabel: '解析设置', helpVisible: true });
   await screenshot(client, '00-dashboard-mobile.png');
   await evaluate(client, "document.querySelector('#help-button').click(); true");
   await waitFor(client, "document.querySelector('#help-dialog').open");
   assert.deepEqual(await evaluate(client, "({ overflow: document.documentElement.scrollWidth - window.innerWidth, minButtonHeight: Math.min(...[...document.querySelectorAll('#help-dialog button')].filter((button) => button.offsetParent).map((button) => button.getBoundingClientRect().height)) })"), { overflow: 0, minButtonHeight: 44 });
   await screenshot(client, '00-help-mobile.png');
   await evaluate(client, "document.querySelector('#help-close').click(); true");
+  await evaluate(client, "document.querySelector('#credentials-button').click(); true");
+  await waitFor(client, "document.querySelector('#credentials-dialog').open");
+  assert.deepEqual(await evaluate(client, "({ overflow: document.documentElement.scrollWidth - window.innerWidth, minButtonHeight: Math.min(...[...document.querySelectorAll('#credentials-dialog button')].filter((button) => button.offsetParent).map((button) => button.getBoundingClientRect().height)) })"), { overflow: 0, minButtonHeight: 44 });
+  await screenshot(client, '00-credentials-mobile.png');
+  await evaluate(client, "document.querySelector('#credentials-close').click(); true");
   await client.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
 
   await evaluate(client, "document.querySelector('#dashboard-start-button').click(); true");
-  assert.deepEqual(await evaluate(client, "({ uploadVisible: !document.querySelector('#step-upload').hidden, goal: document.querySelector('#upload-step-goal').textContent.includes('同一场活动') && document.querySelector('#upload-step-goal').textContent.includes('全部版本'), currentNav: document.querySelector('.primary-nav [data-view=\"upload\"]').getAttribute('aria-current') })"), { uploadVisible: true, goal: true, currentNav: 'page' });
+  assert.deepEqual(await evaluate(client, "({ uploadVisible: !document.querySelector('#step-upload').hidden, goal: document.querySelector('#upload-step-goal').textContent.includes('先上传一份') && document.querySelector('#upload-step-goal').textContent.includes('继续追加'), currentNav: document.querySelector('.primary-nav [data-view=\"upload\"]').getAttribute('aria-current') })"), { uploadVisible: true, goal: true, currentNav: 'page' });
   await screenshot(client, '01-upload-desktop.png');
 
   await evaluate(client, `(() => {
@@ -172,7 +407,7 @@ try {
     document.querySelector('#upload-form').dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }));
     return true;
   })()`);
-  await waitFor(client, "document.querySelector('#global-message').textContent.includes('最多选择 20 份')");
+  await waitFor(client, "document.querySelector('#global-message').textContent.includes('最多纳入 20 份')");
 
   await evaluate(client, "window.__draftWarning = ''; window.confirm = (message) => { window.__draftWarning = message; return true; }; document.querySelector('.primary-nav [data-view=\"dashboard\"]').click(); document.querySelector('#quick-demo-button').click(); true");
   await waitFor(client, "!document.querySelector('#step-confirm').hidden");
@@ -231,6 +466,7 @@ try {
       condition: conditional.includes('不能参加'),
       timelineCount: document.querySelectorAll('#change-timeline .timeline-item').length,
       minButtonHeight: Math.min(...[...document.querySelectorAll('button:not([hidden])')].filter((button) => button.offsetParent).map((button) => button.getBoundingClientRect().height)),
+      successToast: document.querySelector('#toast-text').textContent.includes('示例清单已生成'),
     };
   })()`);
   assert.deepEqual(plan, {
@@ -246,6 +482,7 @@ try {
     condition: true,
     timelineCount: 5,
     minButtonHeight: 44,
+    successToast: true,
   });
   await screenshot(client, '03-plan-desktop.png');
 
@@ -292,6 +529,31 @@ try {
   await evaluate(client, "document.querySelector('.history-card .text-button').click(); true");
   await waitFor(client, "!document.querySelector('#step-plan').hidden");
   assert.deepEqual(await evaluate(client, "({ completed: document.querySelector('.plan-group.done .task-toggle')?.getAttribute('aria-pressed'), timelineCount: document.querySelectorAll('#change-timeline .timeline-item').length })"), { completed: 'true', timelineCount: 5 });
+  await evaluate(client, "document.querySelector('#append-material-button').click(); true");
+  await waitFor(client, "!document.querySelector('#step-upload').hidden");
+  const restoredAppend = await evaluate(client, `({
+    title: document.querySelector('#upload-title').textContent,
+    warnsAboutOriginal: document.querySelector('#upload-step-goal').textContent.includes('需重传 4 份历史原材料'),
+    asksForAll: document.querySelector('#upload-step-goal').textContent.includes('必须重传'),
+    listedOriginals: document.querySelectorAll('#file-list .is-required').length,
+    name: document.querySelector('#child-name').value,
+    className: document.querySelector('#class-name').value,
+    identityLocked: !document.querySelector('#identity-mode-note').hidden
+      && document.querySelector('#identity-mode-note').textContent.includes('沿用原清单'),
+    actionLabel: document.querySelector('#analyze-button').textContent,
+  })`);
+  assert.deepEqual(restoredAppend, {
+    title: '追加同一活动的材料',
+    warnsAboutOriginal: true,
+    asksForAll: true,
+    listedOriginals: 4,
+    name: '周青禾',
+    className: '五（1）班',
+    identityLocked: true,
+    actionLabel: '重新比对并找出新变化',
+  });
+  await evaluate(client, "document.querySelector('.primary-nav [data-view=\"plan\"]').click(); true");
+  await waitFor(client, "!document.querySelector('#step-plan').hidden");
   await evaluate(client, `(() => {
     window.__icsText = '';
     URL.createObjectURL = (blob) => { blob.text().then((value) => { window.__icsText = value; }); return 'blob:mock'; };
@@ -300,7 +562,7 @@ try {
     return true;
   })()`);
   await waitFor(client, "window.__icsText.includes('BEGIN:VCALENDAR')");
-  const calendar = await evaluate(client, "({ keepsPending: window.__icsText.includes('体育馆北门'), omitsCompleted: !window.__icsText.includes('准备研学个人物品'), importHint: document.querySelector('#global-message').textContent.includes('打开文件完成导入') })");
+  const calendar = await evaluate(client, "({ keepsPending: window.__icsText.includes('体育馆北门'), omitsCompleted: !window.__icsText.includes('准备研学个人物品'), importHint: document.querySelector('#toast-text').textContent.includes('打开文件完成导入') })");
   assert.deepEqual(calendar, { keepsPending: true, omitsCompleted: true, importHint: true });
 
   await evaluate(client, `(() => {
@@ -431,7 +693,8 @@ try {
     const history = await import('/history.js');
     const records = history.loadHistory(localStorage);
     const second = { ...records[0], student: { ...records[0].student, name: '吴初夏' } };
-    history.persistHistory(localStorage, history.upsertPlan(records, second, '2026-10-17T12:00:00.000Z'));
+    const nextSavedAt = new Date(Date.parse(records[0].saved_at) + 1_000).toISOString();
+    history.persistHistory(localStorage, history.upsertPlan(records, second, nextSavedAt));
     window.dispatchEvent(new StorageEvent('storage', { key: history.HISTORY_KEY }));
     return true;
   })()`);
@@ -439,13 +702,300 @@ try {
   await evaluate(client, "document.querySelector('.primary-nav [data-view=\"dashboard\"]').click(); true");
   await waitFor(client, "!document.querySelector('#view-dashboard').hidden");
   await evaluate(client, "window.confirm = () => true; document.querySelector('.history-card .delete-button').click(); true");
+  await waitFor(client, "document.querySelectorAll('.history-card').length === 1");
   assert.deepEqual(await evaluate(client, "({ cards: document.querySelectorAll('.history-card').length, family: document.querySelector('#current-family').textContent })"), {
     cards: 1,
     family: '周青禾 · 五（1）班',
   });
   await evaluate(client, "document.querySelector('#clear-history-button').click(); true");
+  await waitFor(client, "document.querySelectorAll('.history-card').length === 0");
   const deletedHistory = await evaluate(client, "({ cards: document.querySelectorAll('.history-card').length, empty: !document.querySelector('#dashboard-empty').hidden, clearHidden: document.querySelector('#clear-history-button').hidden, stored: JSON.parse(localStorage.getItem('notice-action.history.v1') || '[]').length, family: document.querySelector('#current-family').textContent })");
   assert.deepEqual(deletedHistory, { cards: 0, empty: true, clearHidden: true, stored: 0, family: '尚未选择家庭' });
+
+  await evaluate(client, `(() => {
+    document.querySelector('#credentials-button').click();
+    document.querySelector('#credentials-app-id').value = 'incremental-test-app';
+    document.querySelector('#credentials-secret-code').value = 'incremental-test-secret';
+    document.querySelector('#credentials-form').requestSubmit();
+    return true;
+  })()`);
+  await waitFor(client, "!document.querySelector('#credentials-dialog').open && document.querySelector('#service-status').textContent.includes('在线解析已就绪')");
+  await evaluate(client, "document.querySelector('#new-notice-button').click(); window.__mockIncrementalUpload = true; true");
+  await evaluate(client, `(() => {
+    const first = new DataTransfer();
+    first.items.add(new File(['%PDF-1.7'], '先选的基础通知.pdf', { type: 'application/pdf', lastModified: 1 }));
+    const second = new DataTransfer();
+    second.items.add(new File(['%PDF-1.7 update'], '后选的补充说明.pdf', { type: 'application/pdf', lastModified: 2 }));
+    const input = document.querySelector('#notice-files');
+    input.files = first.files;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    input.files = second.files;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  })()`);
+  assert.deepEqual(await evaluate(client, "({ count: document.querySelectorAll('#file-list li').length, label: document.querySelector('#selected-file-count').textContent })"), {
+    count: 2,
+    label: '2 份待解析',
+  });
+  await evaluate(client, "document.querySelector('#file-list .file-remove').click(); true");
+  assert.deepEqual(await evaluate(client, `({
+    count: document.querySelectorAll('#file-list li').length,
+    label: document.querySelector('#selected-file-count').textContent,
+    remaining: document.querySelector('#file-list .file-name b').textContent,
+    removeLabel: document.querySelector('#file-list .file-remove').getAttribute('aria-label'),
+    removeHeight: Math.round(document.querySelector('#file-list .file-remove').getBoundingClientRect().height),
+  })`), {
+    count: 1,
+    label: '1 份待解析',
+    remaining: '后选的补充说明.pdf',
+    removeLabel: '移除后选的补充说明.pdf',
+    removeHeight: 44,
+  });
+
+  await evaluate(client, "document.querySelector('#new-notice-button').click(); true");
+  await waitFor(client, "document.querySelector('#discard-dialog').open");
+  await screenshot(client, '01b-discard-dialog-desktop.png');
+  assert.deepEqual(await evaluate(client, `({
+    title: document.querySelector('#discard-title').textContent,
+    keepsDraft: document.querySelectorAll('#file-list li').length,
+    cancelFocused: document.activeElement.id === 'discard-cancel',
+    minButtonHeight: Math.min(...[...document.querySelectorAll('#discard-dialog button')].map((button) => button.getBoundingClientRect().height)),
+  })`), {
+    title: '要开始新的整理吗？',
+    keepsDraft: 1,
+    cancelFocused: true,
+    minButtonHeight: 44,
+  });
+  await evaluate(client, "document.querySelector('#discard-cancel').click(); true");
+  await waitFor(client, "!document.querySelector('#discard-dialog').open && document.activeElement.id === 'new-notice-button'");
+  assert.equal(await evaluate(client, "document.querySelectorAll('#file-list li').length"), 1);
+  await evaluate(client, "document.querySelector('#new-notice-button').click(); true");
+  await waitFor(client, "document.querySelector('#discard-dialog').open");
+  await evaluate(client, "document.querySelector('#discard-confirm').click(); true");
+  await waitFor(client, "!document.querySelector('#discard-dialog').open && document.querySelectorAll('#file-list li').length === 0");
+
+  await evaluate(client, `(() => {
+    document.querySelector('#child-name').value = '林小满';
+    document.querySelector('#class-name').value = '三（2）班';
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(['%PDF-1.7 base'], '基础通知.pdf', { type: 'application/pdf', lastModified: 3 }));
+    const input = document.querySelector('#notice-files');
+    input.files = transfer.files;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    document.querySelector('#upload-form').requestSubmit();
+    return true;
+  })()`);
+  await waitFor(client, "!document.querySelector('#step-confirm').hidden");
+  assert.equal(await evaluate(client, "window.__incrementalParseCalls"), 1);
+  await evaluate(client, `(() => {
+    document.querySelector('#back-button').click();
+    const className = document.querySelector('#class-name');
+    className.value = '三（3）班';
+    className.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  })()`);
+  const invalidatedIdentity = await evaluate(client, `({
+    confirmDisabled: document.querySelector('.primary-nav [data-view="confirm"]').disabled,
+    finalizeDisabled: document.querySelector('#finalize-button').disabled,
+    changeCountHidden: document.querySelector('#nav-change-count').hidden,
+  })`);
+  assert.deepEqual(invalidatedIdentity, { confirmDisabled: true, finalizeDisabled: true, changeCountHidden: true });
+  await evaluate(client, "document.querySelector('#upload-form').requestSubmit(); true");
+  await waitFor(client, "!document.querySelector('#step-confirm').hidden");
+  assert.deepEqual(await evaluate(client, `({
+    parseCalls: window.__incrementalParseCalls,
+    className: window.__incrementalMergePayloads.at(-1).context.student.class_name,
+  })`), { parseCalls: 1, className: '三（3）班' });
+  await evaluate(client, `(() => {
+    document.querySelector('#back-button').click();
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(['%PDF-1.7 extra'], '刚补充的通知.pdf', { type: 'application/pdf', lastModified: 31 }));
+    const input = document.querySelector('#notice-files');
+    input.files = transfer.files;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  })()`);
+  const invalidatedDraft = await evaluate(client, `({
+    confirmDisabled: document.querySelector('.primary-nav [data-view="confirm"]').disabled,
+    finalizeDisabled: document.querySelector('#finalize-button').disabled,
+    changeCountHidden: document.querySelector('#nav-change-count').hidden,
+  })`);
+  assert.deepEqual(invalidatedDraft, { confirmDisabled: true, finalizeDisabled: true, changeCountHidden: true });
+  await evaluate(client, "document.querySelector('#new-notice-button').click(); true");
+  await waitFor(client, "document.querySelector('#discard-dialog').open");
+  await evaluate(client, "document.querySelector('#discard-confirm').click(); true");
+  await waitFor(client, "!document.querySelector('#discard-dialog').open && document.querySelectorAll('#file-list li').length === 0");
+  await evaluate(client, `(() => {
+    document.querySelector('#child-name').value = '林小满';
+    document.querySelector('#class-name').value = '三（2）班';
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(['%PDF-1.7 base'], '基础通知.pdf', { type: 'application/pdf', lastModified: 3 }));
+    const input = document.querySelector('#notice-files');
+    input.files = transfer.files;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    document.querySelector('#upload-form').requestSubmit();
+    return true;
+  })()`);
+  await waitFor(client, "!document.querySelector('#step-confirm').hidden");
+  await evaluate(client, `(() => {
+    document.querySelectorAll('.decision-row [data-decision="true"]').forEach((button) => button.click());
+    document.querySelector('[name="submission-receipt"][value="not_submitted"]').click();
+    document.querySelector('[name="submission-payment"][value="not_submitted"]').click();
+    document.querySelector('#finalize-button').click();
+    return true;
+  })()`);
+  await waitFor(client, "!document.querySelector('#step-plan').hidden");
+  assert.equal(await evaluate(client, "Boolean(document.querySelector('#append-material-button'))"), true);
+  await evaluate(client, `(() => {
+    const titles = ['提交电子回执', '缴纳活动费', '准备研学个人物品'];
+    document.querySelectorAll('.plan-group.active .todo').forEach((todo) => {
+      if (titles.some((title) => todo.querySelector('b').textContent.includes(title))) {
+        todo.querySelector('.task-toggle').click();
+      }
+    });
+    return true;
+  })()`);
+  await evaluate(client, "document.querySelector('#append-material-button').click(); true");
+  await waitFor(client, "!document.querySelector('#step-upload').hidden");
+  assert.deepEqual(await evaluate(client, `({
+    title: document.querySelector('#upload-title').textContent,
+    guidance: document.querySelector('#upload-step-goal').textContent,
+    name: document.querySelector('#child-name').value,
+    className: document.querySelector('#class-name').value,
+  })`), {
+    title: '追加同一活动的材料',
+    guidance: '1已纳入 1 份材料这次只选择新增或修改后的通知，系统会和已解析材料重新比对。',
+    name: '林小满',
+    className: '三（2）班',
+  });
+  await evaluate(client, `(() => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(['%PDF-1.7 change'], '改期通知.pdf', { type: 'application/pdf', lastModified: 4 }));
+    const input = document.querySelector('#notice-files');
+    input.files = transfer.files;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    document.querySelector('#upload-form').requestSubmit();
+    return true;
+  })()`);
+  await waitFor(client, "!document.querySelector('#step-confirm').hidden");
+  const incrementalUpload = await evaluate(client, `({
+    parseCalls: window.__incrementalParseCalls,
+    mergeCalls: window.__incrementalMergePayloads.length,
+    mergedDocuments: window.__incrementalMergePayloads.at(-1).documents.map((document) => document.name),
+    currentEvent: window.__incrementalMergePayloads.at(-1).context.current_event,
+    completedActions: window.__incrementalMergePayloads.at(-1).context.completed_actions.map((action) => action.kind),
+    visibleChanges: document.querySelectorAll('#change-list .change-card').length,
+    summary: document.querySelector('#change-summary-pill').textContent,
+  })`);
+  assert.deepEqual(incrementalUpload, {
+    parseCalls: 3,
+    mergeCalls: 4,
+    mergedDocuments: ['基础通知.pdf', '改期通知.pdf'],
+    currentEvent: { date: '2026-10-26', meet_time: '08:00', meet_location: '体育馆北门' },
+    completedActions: ['receipt', 'payment'],
+    visibleChanges: 1,
+    summary: '1 项变化',
+  });
+  await evaluate(client, `(async () => {
+    const history = await import('/history.js');
+    const records = history.loadHistory(localStorage);
+    const unrelated = { ...records[0], student: { ...records[0].student, name: '旁路记录' } };
+    const older = new Date(Date.parse(records[0].saved_at) - 1_000).toISOString();
+    history.persistHistory(localStorage, history.upsertPlan(records, unrelated, older));
+    return true;
+  })()`);
+  await evaluate(client, `(() => {
+    document.querySelectorAll('.decision-row [data-decision="true"]').forEach((button) => button.click());
+    document.querySelector('[name="submission-receipt"][value="submitted"]')?.click();
+    document.querySelector('[name="submission-payment"][value="submitted"]')?.click();
+    document.querySelector('#finalize-button').click();
+    return true;
+  })()`);
+  await waitFor(client, "!document.querySelector('#step-plan').hidden");
+  assert.deepEqual(await evaluate(client, `({
+    completedTaskPreserved: Boolean(document.querySelector('.plan-group.done .task-toggle[aria-pressed="true"]')),
+    historyRecords: JSON.parse(localStorage.getItem('notice-action.history.v1') || '[]').length,
+    materialCount: JSON.parse(localStorage.getItem('notice-action.history.v1') || '[]')[0].documents.length,
+    timelineCount: document.querySelectorAll('#change-timeline .timeline-item').length,
+    keepsLocationHistory: ['学校东门', '体育馆北门', '图书馆门口'].every((place) => document.querySelector('#change-timeline').textContent.includes(place)),
+    allChangesAccepted: Object.values(window.__incrementalFinalizePayloads.at(-1).decisions.change_decisions).length === 5
+      && Object.values(window.__incrementalFinalizePayloads.at(-1).decisions.change_decisions).every(Boolean),
+  })`), {
+    completedTaskPreserved: true,
+    historyRecords: 2,
+    materialCount: 2,
+    timelineCount: 6,
+    keepsLocationHistory: true,
+    allChangesAccepted: true,
+  });
+  await client.send('Page.reload', { ignoreCache: true });
+  await waitFor(client, "document.querySelectorAll('.history-card').length === 2");
+  await evaluate(client, `(() => {
+    window.__mockIncrementalUpload = true;
+    document.querySelector('#credentials-button').click();
+    document.querySelector('#credentials-app-id').value = 'incremental-test-app';
+    document.querySelector('#credentials-secret-code').value = 'incremental-test-secret';
+    document.querySelector('#credentials-form').requestSubmit();
+    return true;
+  })()`);
+  await waitFor(client, "!document.querySelector('#credentials-dialog').open && document.querySelector('#service-status').textContent.includes('在线解析已就绪')");
+  await evaluate(client, "document.querySelector('.history-card .text-button').click(); document.querySelector('#append-material-button').click(); true");
+  await waitFor(client, "!document.querySelector('#step-upload').hidden");
+  assert.deepEqual(await evaluate(client, `({
+    requiredCount: document.querySelectorAll('#file-list .is-required').length,
+    requiredNames: Array.from(document.querySelectorAll('#file-list .is-required b')).map((node) => node.textContent),
+  })`), {
+    requiredCount: 2,
+    requiredNames: ['基础通知.pdf', '改期通知.pdf'],
+  });
+  await evaluate(client, `(() => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(['%PDF-1.7 third'], '再次改期.pdf', { type: 'application/pdf', lastModified: 5 }));
+    transfer.items.add(new File(['not the original'], '基础通知.pdf', { type: 'application/pdf', lastModified: 30 }));
+    const input = document.querySelector('#notice-files');
+    input.files = transfer.files;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    document.querySelector('#upload-form').requestSubmit();
+    return true;
+  })()`);
+  await waitFor(client, "document.querySelector('#global-message').textContent.includes('基础通知.pdf') && document.querySelector('#global-message').textContent.includes('改期通知.pdf')");
+  assert.equal(await evaluate(client, "window.__incrementalMergePayloads.length"), 0);
+  await evaluate(client, "document.querySelector('.primary-nav [data-view=\"plan\"]').click(); document.querySelector('#append-material-button').click(); true");
+  await waitFor(client, "!document.querySelector('#step-upload').hidden");
+  await evaluate(client, `(() => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(['%PDF-1.7 third'], '再次改期.pdf', { type: 'application/pdf', lastModified: 5 }));
+    transfer.items.add(new File(['%PDF-1.7 base'], '基础通知.pdf', { type: 'application/pdf', lastModified: 3 }));
+    transfer.items.add(new File(['%PDF-1.7 change'], '改期通知.pdf', { type: 'application/pdf', lastModified: 4 }));
+    const input = document.querySelector('#notice-files');
+    input.files = transfer.files;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    document.querySelector('#upload-form').requestSubmit();
+    return true;
+  })()`);
+  await waitFor(client, "!document.querySelector('#step-confirm').hidden");
+  const fallbackAppend = await evaluate(client, `({
+    mergeCalls: window.__incrementalMergePayloads.length,
+    mergedDocuments: window.__incrementalMergePayloads.at(-1).documents.map(({ name }) => name),
+  })`);
+  assert.deepEqual(fallbackAppend, {
+    mergeCalls: 1,
+    mergedDocuments: ['再次改期.pdf', '基础通知.pdf', '改期通知.pdf'],
+  });
+  await evaluate(client, `(async () => {
+    document.querySelectorAll('.decision-row [data-decision="true"]').forEach((button) => button.click());
+    document.querySelector('[name="submission-receipt"][value="submitted"]')?.click();
+    document.querySelector('[name="submission-payment"][value="submitted"]')?.click();
+    const records = JSON.parse(localStorage.getItem('notice-action.history.v1'));
+    records[0] = { ...records[0], saved_at: new Date(Date.parse(records[0].saved_at) + 60_000).toISOString() };
+    localStorage.setItem('notice-action.history.v1', JSON.stringify(records));
+    document.querySelector('#finalize-button').click();
+    return true;
+  })()`);
+  await waitFor(client, "document.querySelector('#global-message').textContent.includes('另一个窗口更新')");
+  assert.equal(await evaluate(client, "window.__incrementalFinalizePayloads.length"), 0);
+  await evaluate(client, "window.__mockIncrementalUpload = false; document.querySelector('.primary-nav [data-view=\"dashboard\"]').click(); window.confirm = () => true; document.querySelector('#clear-history-button').click(); true");
+  await waitFor(client, "document.querySelectorAll('.history-card').length === 0");
 
   await client.send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => {
     const nativeFetch = window.fetch.bind(window);
@@ -495,6 +1045,20 @@ try {
     return true;
   })()`);
   await waitFor(client, "window.__parseStarted");
+  await evaluate(client, `(() => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(['%PDF-1.7 late'], '解析中误加的通知.pdf', { type: 'application/pdf' }));
+    const input = document.querySelector('#notice-files');
+    input.files = transfer.files;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  })()`);
+  assert.deepEqual(await evaluate(client, "({ disabled: document.querySelector('#notice-files').disabled, identityDisabled: ['#child-name', '#class-name', '#participating'].every((selector) => document.querySelector(selector).disabled), queued: document.querySelectorAll('#file-list li').length })"), {
+    disabled: true,
+    identityDisabled: true,
+    queued: 1,
+  });
+  assert.equal(await evaluate(client, "document.querySelector('#analyze-button').textContent"), '正在解析 1/1：待解析通知.pdf');
   await evaluate(client, "window.confirm = () => true; document.querySelector('#help-button').click(); document.querySelector('#help-demo-button').click(); true");
   await waitFor(client, "window.__parseAborted");
   await evaluate(client, "window.__releaseParse(); true");
@@ -503,7 +1067,13 @@ try {
   const parseRace = await evaluate(client, "({ aborted: window.__parseAborted, mergeCalls: window.__mergeCalls, files: document.querySelector('#notice-files').files.length, demoIdentity: document.querySelector('#current-family').textContent, quiet: !document.querySelector('#global-message').textContent.includes('Aborted') })");
   assert.deepEqual(parseRace, { aborted: true, mergeCalls: 0, files: 0, demoIdentity: '林小满 · 三（2）班', quiet: true });
 
-  console.log(JSON.stringify({ ok: true, emptyDashboard, confirm, plan, persisted, restoredDashboard, calendar, evidenceCenter, mobile, nonParticipant, deletedHistory, parseRace }, null, 2));
+  await evaluate(client, "document.querySelector('#credentials-button').click(); true");
+  await waitFor(client, "document.querySelector('#credentials-dialog').open");
+  const legacyHealth = await evaluate(client, "({ saveDisabled: document.querySelector('#credentials-save').disabled, guidance: document.querySelector('#credentials-status').textContent.includes('后台服务版本过旧') })");
+  assert.deepEqual(legacyHealth, { saveDisabled: true, guidance: true });
+  await evaluate(client, "document.querySelector('#credentials-close').click(); true");
+
+  console.log(JSON.stringify({ ok: true, emptyDashboard, confirm, plan, persisted, restoredDashboard, restoredAppend, calendar, evidenceCenter, mobile, nonParticipant, deletedHistory, invalidatedIdentity, invalidatedDraft, incrementalUpload, fallbackAppend, parseRace, legacyHealth }, null, 2));
 } finally {
   client?.close();
   chrome.kill();

@@ -40,7 +40,7 @@ function plan(overrides = {}) {
       },
     },
     student: { name: '林小满', class_name: '三（2）班', group: '第3组', participating: true },
-    documents: [{ document_id: 'notice', name: '通知.pdf', issued_at: '2026-10-16T00:00:00+08:00', markdown: '不能入库' }],
+    documents: [{ document_id: 'notice', name: '通知.pdf', issued_at: '2026-10-16T00:00:00+08:00', parsed_at: '2026-10-16T01:00:00.000Z', markdown: '不能入库' }],
     changes: [{
       id: 'event_date', kind: 'modified', field: 'event.date', label: '活动日期', before: '2026-10-23', after: '2026-10-26', decision: 'accepted',
       evidence: [{ document_id: 'notice', document_name: '通知.pdf', element_id: 'date', page_number: 1, quote: '改为10月26日' }],
@@ -68,7 +68,7 @@ test('upsertPlan creates only a compact, versioned finalized-plan record', () =>
   assert.equal(records[0].history_version, 1);
   assert.equal(records[0].saved_at, '2026-10-16T12:00:00.000Z');
   assert.deepEqual(records[0].student, source.student);
-  assert.deepEqual(records[0].documents, [{ document_id: 'notice', name: '通知.pdf', issued_at: '2026-10-16T00:00:00+08:00' }]);
+  assert.deepEqual(records[0].documents, [{ document_id: 'notice', name: '通知.pdf', issued_at: '2026-10-16T00:00:00+08:00', parsed_at: '2026-10-16T01:00:00.000Z' }]);
   assert.deepEqual(records[0].active_todos[0].items, ['水杯']);
   assert.equal(records[0].event.evidence.date[0].quote, '改为10月26日');
 
@@ -118,14 +118,30 @@ test('loadHistory safely rejects invalid and old storage and persistHistory sani
 test('setTaskCompleted updates one task without mutating records', () => {
   const records = upsertPlan([], plan(), '2026-10-16T12:00:00.000Z');
   const snapshot = structuredClone(records);
-  const updated = setTaskCompleted(records, records[0].id, 'prepare', true);
+  const updated = setTaskCompleted(
+    records,
+    records[0].id,
+    'prepare',
+    true,
+    '2026-10-19T09:30:00.000Z',
+  );
 
   assert.equal(updated[0].active_todos[0].completed, true);
+  assert.equal(updated[0].saved_at, '2026-10-19T09:30:00.000Z');
   assert.deepEqual(records, snapshot);
   assert.notEqual(updated, records);
   assert.notEqual(updated[0], records[0]);
   assert.notEqual(updated[0].active_todos, records[0].active_todos);
-  assert.deepEqual(setTaskCompleted(updated, 'missing', 'prepare', false), updated);
+
+  const unchanged = setTaskCompleted(
+    updated,
+    updated[0].id,
+    'prepare',
+    true,
+    '2026-10-20T09:30:00.000Z',
+  );
+  assert.equal(unchanged[0].saved_at, '2026-10-19T09:30:00.000Z');
+  assert.deepEqual(setTaskCompleted(updated, 'missing', 'prepare', false, '2026-10-20T09:30:00.000Z'), updated);
 });
 
 test('removeRecord removes one record immutably and persistHistory can clear all', () => {

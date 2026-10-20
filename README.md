@@ -1,72 +1,194 @@
-# NoticeAction 通知行动台
+<div align="center">
 
-一个本地单用户通知行动系统：把学校 PDF、分组 Excel 和群聊截图合并成孩子专属行动清单，并在覆盖旧通知前让家长确认变化。
+# 📬 NoticeAction 通知行动台
 
-## 当前系统已完成
+### 把散落在 PDF、Excel 和群截图里的学校通知，变成孩子专属的行动清单
 
-- 首次使用向导、材料准备说明、三步流程、30 秒示例和随时可打开的使用指南。
-- PDF、XLSX、PNG、JPG 原文件上传与 xParse 默认引擎解析。
-- 活动日期、时间、地点、个人物品、分组物资与条件动作合并。
-- 修改、取消和条件新增逐项确认。
-- 回执与缴费状态分别由用户明确选择，不根据“无需重复提交”擅自推断。
-- 每项结论可查看文件、页码、元素 ID 和必要原文片段。
-- 最终行动清单和 `.ics` 日历导出。
-- 最终确认后的精简行动计划和历史记录只保存在当前浏览器 `localStorage`，可在历史页面逐条删除或一键清空。
-- 无数据库；原始文件、完整解析文档、xParse 凭据和供应商原始响应都不会持久化。
+先读懂通知，再核对变化，最后明确“谁、何时、带什么、做什么”。<br>
+面向 TextIn xParse「文档觉醒」AI 应用创新赛的可运行作品。
 
-## 直接体验示例
+![Node.js 22+](https://img.shields.io/badge/Node.js-22%2B-2f855a?style=flat-square&logo=nodedotjs&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-71%20passed-0f766e?style=flat-square)
+![Coverage](https://img.shields.io/badge/line%20coverage-98.20%25-f0b44d?style=flat-square)
+![Local First](https://img.shields.io/badge/privacy-local--first-244c42?style=flat-square)
 
-需要 Node.js 22 或更高版本，不需要安装依赖。
+</div>
 
-```powershell
-cd C:\path\to\notice-action-demo
-.\start.ps1
+![NoticeAction 总览](artifacts/screenshots/00-dashboard-empty-desktop.png)
+
+## 它解决什么问题
+
+一场研学活动的信息可能散落在正式通知、班级分组表、群聊补充截图和临时变更中。家长真正需要的并不是“再读一遍文档”，而是三个确定答案：
+
+- **我的孩子是否参加、属于哪一组？**
+- **最新版到底改了什么，旧要求是否已经失效？**
+- **最后要在什么时间前，准备哪些物品、完成哪些动作？**
+
+NoticeAction 将多种通知放进同一个活动上下文，保留出处和人工确认环节，输出可以直接执行的个人清单，而不是一段泛泛的 AI 摘要。
+
+## 三步完成一次整理
+
+```mermaid
+flowchart LR
+    A[1. 上传通知<br/>PDF / XLSX / 图片] --> B[2. 核对变化<br/>新增 / 修改 / 取消]
+    B --> C[3. 获得行动清单<br/>待办 / 证据 / 日历]
+    C --> D{又收到补充通知?}
+    D -- 是 --> E[追加新材料]
+    E --> B
+    D -- 否 --> F[按清单执行]
 ```
 
-浏览器打开 `http://127.0.0.1:43173`，点击“30 秒体验研学示例”。示例来自真实 xParse 返回值的脱敏快照，不消耗解析额度，也不会写入或覆盖真实历史。
+<table>
+  <tr>
+    <td width="50%"><img src="artifacts/screenshots/01-upload-desktop.png" alt="上传通知材料"></td>
+    <td width="50%"><img src="artifacts/screenshots/02-confirm-desktop.png" alt="确认通知变化"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>① 混合上传通知材料</b></td>
+    <td align="center"><b>② 逐项确认变化与冲突</b></td>
+  </tr>
+</table>
 
-`samples/source-files` 同时提供四份虚构原始材料，便于演示真实上传；不含真实儿童信息。
+## 最终成果不是摘要，而是行动台
 
-也可以直接运行：
+系统会把日期、地点、个人物品、分组物资、条件动作、回执与缴费分别整理；每个结论都可以回到原文件、页码和元素位置查看依据。确认后还可导出 `.ics` 日历。
+
+![个人行动清单](artifacts/screenshots/03-plan-desktop.png)
+
+## 核心能力
+
+| 能力 | 实际作用 |
+|---|---|
+| 多格式联合解析 | PDF、XLSX、PNG、JPG 可以混合上传，通过 TextIn xParse 还原正文和表格 |
+| 个人化匹配 | 结合孩子姓名、班级和是否参加，过滤与当前家庭无关的信息 |
+| 变更识别 | 对新增、修改、取消和互相冲突的要求逐项确认，不静默覆盖旧通知 |
+| 增量追加 | 清单生成后可继续上传补充通知，只重新分析新增材料并与基线比对 |
+| 可追溯证据 | 每项结论保留文件名、页码、元素 ID 和必要原文片段 |
+| 可执行交付 | 生成按时间排序的行动清单，并导出标准日历文件 |
+| 本地优先 | 服务仅监听本机；原文件、完整解析文档和供应商原始响应不持久化 |
+
+### 历史活动可以继续追加
+
+![活动历史与继续追加](artifacts/screenshots/04-dashboard-history-desktop.png)
+
+### 每条结论都能回到通知依据
+
+![通知依据](artifacts/screenshots/05-evidence-desktop.png)
+
+## 30 秒跑起来
+
+> 环境要求：Windows 10/11，Node.js 22 或更高版本。项目没有第三方运行依赖，无需 `npm install`。
+
+```powershell
+git clone https://github.com/xiaosongxiaosong1111/NoticeAction.git
+cd NoticeAction
+```
+
+然后双击 **`start-hidden.vbs`**。程序会在后台启动本地服务并打开：
+
+```text
+http://127.0.0.1:43173
+```
+
+首次体验可以直接点击首页的 **“30 秒体验研学示例”**。示例来自真实 xParse 返回值的脱敏快照，不消耗解析额度，也不会覆盖真实历史。
+
+如果需要观察启动日志或排查问题：
 
 ```powershell
 npm start
 ```
 
-## 使用真实 xParse
+## 使用真实 TextIn xParse
 
-凭据只进入当前服务进程，不写入文件，也不返回浏览器：
+1. 打开右上角 **“解析设置”**。
+2. 输入 TextIn `AppID` 和 `Secret Code`，点击 **“保存并启用”**。
+3. 点击 **“新建整理”**，上传通知并填写孩子姓名、班级及是否参加。
+4. 解析后核对变化，生成个人行动清单。
+5. 后续收到新通知，按 **“总览 → 打开清单 → 追加变更通知”** 进入；若页面未刷新，只需上传新文件。
 
-```powershell
-.\start.ps1 -Live
+凭据由 Windows DPAPI（CurrentUser）加密后保存在当前用户的本机目录，不写入项目、Git、浏览器存储或日志；页面与接口只返回“是否已配置”，不会回显明文。
+
+<details>
+<summary><b>查看更多真实界面截图</b></summary>
+
+### 凭据设置（移动端）
+
+<img src="artifacts/screenshots/00-credentials-mobile.png" alt="移动端解析设置" width="390">
+
+### 未保存内容保护
+
+新建整理前若存在待上传文件、填写中的身份信息、已生成分析或正在解析的任务，系统会先说明将被丢弃的内容；取消后保留原状态并恢复键盘焦点。
+
+![未保存内容确认弹窗](artifacts/screenshots/01b-discard-dialog-desktop.png)
+
+### 移动端行动清单
+
+<img src="artifacts/screenshots/06-plan-mobile.png" alt="移动端行动清单" width="390">
+
+### 内置使用指南
+
+![使用指南](artifacts/screenshots/00-help-desktop.png)
+
+</details>
+
+## 数据流与隐私边界
+
+```mermaid
+flowchart LR
+    A[本机通知文件] --> B[浏览器页面]
+    B --> C[127.0.0.1 本地 Node 服务]
+    C -->|仅解析时上传| D[TextIn xParse]
+    D --> E[脱敏与字段归一化]
+    E --> F[变化确认与规则合并]
+    F --> G[精简行动计划]
+    G --> H[浏览器 localStorage]
+    G --> I[ICS 日历]
 ```
 
-按提示输入 AppID 和 Secret Code，再上传材料。停止服务后，脚本会清除进程环境变量。未以 `-Live` 启动时，页面会明确保持在示例模式并禁用真实解析按钮。
+- 单文件上限 10 MiB，同一活动最多 20 份；仅接受 `.pdf`、`.xlsx`、`.png`、`.jpg`、`.jpeg`。
+- 服务只监听 `127.0.0.1`，并拒绝非本机 Host、跨站 Origin 和可绕过预检的简单上传类型。
+- 历史只保存最终精简计划及必要证据，可逐条删除、一键清空或清理站点数据。
+- 当前会话可以直接追加文件；刷新页面后完整解析正文已被清除，因此继续比对时必须按提示重传历史原材料。
+- 上传真实材料前请移除不必要的姓名、联系方式等个人信息，并确认拥有处理权限。
 
-真实上传时，原文件会发送到 TextIn xParse 完成解析；本应用不保存原文件或供应商原始响应。上传前请先去除不必要的姓名、联系方式等个人信息，并确认你有权处理这些材料。
+## 项目结构
 
-## 测试
+```text
+NoticeAction/
+├─ server.mjs                 # 本地 HTTP 服务与安全边界
+├─ src/
+│  ├─ credential-store.mjs   # Windows DPAPI 凭据存储
+│  ├─ merge.mjs              # 跨文档比对、冲突与行动清单
+│  └─ xparse-client.mjs      # xParse 调用与响应脱敏
+├─ static/                    # 零框架前端与增量整理逻辑
+├─ samples/                   # 虚构演示材料和脱敏解析快照
+├─ tests/                     # 单元、集成与边界测试
+├─ scripts/browser-smoke.mjs # 浏览器关键流程与截图
+└─ artifacts/screenshots/    # README 与参赛展示截图
+```
+
+## 验证
 
 ```powershell
 npm test
 npm run coverage
-# 先启动服务，再在另一终端运行
+
+# 先 npm start，再开一个终端
 npm run e2e
 ```
 
-测试覆盖首次向导与帮助入口、示例历史隔离、慢请求换代取消、键盘焦点恢复、跨文档金标、文档乱序、合并单元格、旧值清理、冲突决策、条件待办、非参加者、回执/缴费独立状态、历史恢复与清空、动态日期地点、接口输入校验、凭据重定向边界与供应商响应脱敏。
+当前基线：**71 项测试通过，行覆盖率 98.20%**。浏览器流程还会校验首次指引、示例隔离、文件追加、未保存内容保护、键盘焦点、移动端触控尺寸、历史清理和日历导出。
 
-## 数据与安全边界
+## 当前边界
 
-- 单文件上限 10 MiB，一次最多选择 20 份；超过数量会在调用解析前拦截。
-- 仅接受 `.pdf`、`.xlsx`、`.png`、`.jpg`、`.jpeg`。
-- 服务只监听 `127.0.0.1`，默认不暴露到局域网或互联网。
-- 当前没有公网部署或公开体验地址，只能在启动服务的电脑上使用。
-- API 拒绝非本机 Host、跨站 Origin 和可绕过预检的简单上传类型，避免第三方网页消耗解析额度。
-- 只保留合并所需的正文、元素 ID、页码、坐标和表格单元格；去除页面图片 URL、供应商文件/任务/请求 ID。
-- 浏览器历史只保存最终精简计划及其必要证据，不保存原始上传文件或完整解析结果；可逐条删除、一键清空，或清理该站点数据。
-- 不要把真实儿童材料或供应商原始响应放进参赛压缩包。
+这是一个可本地运行、可现场演示的完整单用户系统，不是只有静态页面的概念 Demo。当前语义规则聚焦学校研学通知，不宣称覆盖所有学校与所有文书写法；也暂不包含账号、多用户同步、数据库和公网托管。扩展为正式产品时，还需要更多真实脱敏样本评测、通用结构化抽取和服务端身份认证。
 
-## 当前限制
+---
 
-当前语义解析仍针对“学校研学通知”的词汇与变更模式，不宣称支持所有学校或所有通知写法。它是本地单用户系统，不包含账号、多用户同步、数据库或公网部署；扩展为通用产品时仍需增加结构化模型抽取、更多真实脱敏样本评测和正式鉴权。
+<div align="center">
+
+**让通知不止被读懂，更真正变成下一步行动。**
+
+Built with TextIn xParse · Local-first by design
+
+</div>

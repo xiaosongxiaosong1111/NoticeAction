@@ -3,3 +3,5 @@ node_modules/
 coverage/
 *.log
 artifacts/chrome-*/
+credentials*.dpapi
+credentials*.dat

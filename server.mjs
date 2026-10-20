@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { basename, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { CredentialStoreError, createCredentialStore } from './src/credential-store.mjs';
 import { finalizePlan, MergeError, mergeDocuments } from './src/merge.mjs';
 import { parseFile, XParseError } from './src/xparse-client.mjs';
 
@@ -11,11 +12,16 @@ const STATIC_FILES = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
   ['/history.js', ['history.js', 'text/javascript; charset=utf-8']],
+  ['/incremental.js', ['incremental.js', 'text/javascript; charset=utf-8']],
   ['/styles.css', ['styles.css', 'text/css; charset=utf-8']],
 ]);
 const ALLOWED_EXTENSIONS = new Set(['.pdf', '.xlsx', '.png', '.jpg', '.jpeg']);
 const DEFAULT_FILE_LIMIT = 10 * 1024 * 1024;
 const DEFAULT_JSON_LIMIT = 20 * 1024 * 1024;
+const CREDENTIAL_JSON_LIMIT = 4 * 1024;
+const CREDENTIAL_MANAGEMENT_VERSION = 1;
+const SERVICE_ID = 'notice-action-local-v1';
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/u;
 const UPLOAD_MEDIA_TYPES = new Set([
   'application/octet-stream',
   'application/pdf',
@@ -84,8 +90,16 @@ function demoContext(childName, participating = true) {
 }
 
 function safeMessage(error) {
-  if (error instanceof MergeError || error instanceof XParseError) return error.message;
+  if (error instanceof MergeError || error instanceof XParseError || error instanceof CredentialStoreError) return error.message;
   return '服务暂时不可用，请稍后重试';
+}
+
+function safeErrorPayload(error) {
+  const payload = { message: safeMessage(error) };
+  if (error instanceof XParseError && /^TEXTIN_[A-Z_]+$/u.test(error.code ?? '')) {
+    return { code: error.code, ...payload };
+  }
+  return payload;
 }
 
 function mediaType(request) {
@@ -109,9 +123,41 @@ function assertLocalApiRequest(request, url) {
   if (request.method !== 'POST') return;
   const type = mediaType(request);
   if (url.pathname === '/api/parse' && !UPLOAD_MEDIA_TYPES.has(type)) throw new MergeError('上传 Content-Type 不受支持', 415);
-  if ((url.pathname === '/api/merge' || url.pathname === '/api/finalize') && type !== 'application/json') {
+  if (['/api/merge', '/api/finalize', '/api/credentials', '/api/credentials/clear'].includes(url.pathname) && type !== 'application/json') {
     throw new MergeError('该接口仅接受 application/json', 415);
   }
+}
+
+function validateCredentialPayload(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new MergeError('AppID 或 Secret Code 格式不正确');
+  const keys = Object.keys(payload).sort();
+  if (keys.length !== 2 || keys[0] !== 'app_id' || keys[1] !== 'secret_code') throw new MergeError('AppID 或 Secret Code 格式不正确');
+  const { app_id: appId, secret_code: secretCode } = payload;
+  if (typeof appId !== 'string' || typeof secretCode !== 'string') throw new MergeError('AppID 或 Secret Code 格式不正确');
+  if (appId.length > 256 || secretCode.length > 512 || !appId.trim() || !secretCode.trim()) throw new MergeError('AppID 或 Secret Code 格式不正确');
+  if (CONTROL_CHARACTERS.test(appId) || CONTROL_CHARACTERS.test(secretCode)) throw new MergeError('AppID 或 Secret Code 格式不正确');
+  return Object.freeze({ appId: appId.trim(), secretCode });
+}
+
+function internalCredentials(value) {
+  if (!value?.appId || !value?.secretCode) return null;
+  try {
+    return validateCredentialPayload({ app_id: value.appId, secret_code: value.secretCode });
+  } catch {
+    return null;
+  }
+}
+
+function healthPayload(state, credentialStore) {
+  return {
+    ok: true,
+    service_id: SERVICE_ID,
+    credential_management_version: CREDENTIAL_MANAGEMENT_VERSION,
+    live_parse_configured: Boolean(state.credentials),
+    credentials_saved: Boolean(state.saved),
+    credential_storage_available: Boolean(credentialStore),
+    credential_storage_error: Boolean(state.storageError),
+  };
 }
 
 function hasExpectedSignature(extension, bytes) {
@@ -125,10 +171,31 @@ function hasExpectedSignature(extension, bytes) {
 export function createAppServer({
   demoDocuments = defaultDemoDocuments(),
   env = process.env,
+  initialCredentials,
+  credentialsSaved = false,
+  credentialStorageError = false,
+  credentialStore = null,
   xparseClient = parseFile,
   fileLimit = DEFAULT_FILE_LIMIT,
   jsonLimit = DEFAULT_JSON_LIMIT,
 } = {}) {
+  const startingCredentials = internalCredentials(initialCredentials) ?? internalCredentials({
+    appId: env.TEXTIN_APP_ID,
+    secretCode: env.TEXTIN_SECRET_CODE,
+  });
+  let credentialState = Object.freeze({
+    credentials: startingCredentials,
+    saved: Boolean(startingCredentials && credentialsSaved),
+    storageError: Boolean(credentialStorageError),
+  });
+  let credentialMutationQueue = Promise.resolve();
+
+  function enqueueCredentialMutation(mutation) {
+    const operation = credentialMutationQueue.then(mutation, mutation);
+    credentialMutationQueue = operation.catch(() => {});
+    return operation;
+  }
+
   return createServer(async (request, response) => {
     const url = new URL(request.url, 'http://localhost');
     try {
@@ -138,7 +205,7 @@ export function createAppServer({
         return;
       }
       if (request.method === 'GET' && url.pathname === '/api/health') {
-        sendJson(response, 200, { ok: true, live_parse_configured: Boolean(env.TEXTIN_APP_ID && env.TEXTIN_SECRET_CODE) });
+        sendJson(response, 200, healthPayload(credentialState, credentialStore));
         return;
       }
       if (request.method === 'GET' && url.pathname === '/api/demo') {
@@ -149,17 +216,53 @@ export function createAppServer({
         sendJson(response, 200, { ok: true, analysis });
         return;
       }
+      if (request.method === 'POST' && url.pathname === '/api/credentials') {
+        if (!credentialStore?.save) throw new MergeError('Windows 凭据安全存储不可用', 503);
+        const credentials = validateCredentialPayload(await readJson(request, CREDENTIAL_JSON_LIMIT));
+        const result = await enqueueCredentialMutation(async () => {
+          try {
+            await credentialStore.save(credentials);
+          } catch (error) {
+            credentialState = Object.freeze({ ...credentialState, storageError: true });
+            throw error;
+          }
+          credentialState = Object.freeze({ credentials, saved: true, storageError: false });
+          return healthPayload(credentialState, credentialStore);
+        });
+        sendJson(response, 200, result);
+        return;
+      }
+      if (request.method === 'POST' && url.pathname === '/api/credentials/clear') {
+        if (!credentialStore?.clear) throw new MergeError('Windows 凭据安全存储不可用', 503);
+        const payload = await readJson(request, CREDENTIAL_JSON_LIMIT);
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload) || Object.keys(payload).length !== 0) {
+          throw new MergeError('清除凭据请求格式不正确');
+        }
+        const result = await enqueueCredentialMutation(async () => {
+          try {
+            await credentialStore.clear();
+          } catch (error) {
+            credentialState = Object.freeze({ ...credentialState, storageError: true });
+            throw error;
+          }
+          credentialState = Object.freeze({ credentials: null, saved: false, storageError: false });
+          return healthPayload(credentialState, credentialStore);
+        });
+        sendJson(response, 200, result);
+        return;
+      }
       if (request.method === 'POST' && url.pathname === '/api/parse') {
         const name = url.searchParams.get('filename')?.trim() ?? '';
         const extension = extname(name).toLowerCase();
         if (!name || name.length > 160 || basename(name) !== name || !ALLOWED_EXTENSIONS.has(extension)) throw new MergeError('仅支持安全命名的 PDF、XLSX、PNG、JPG 文件');
-        if (!env.TEXTIN_APP_ID || !env.TEXTIN_SECRET_CODE) throw new MergeError('服务端尚未配置 xParse 凭据', 503);
+        const credentials = credentialState.credentials;
+        if (!credentials) throw new MergeError('服务端尚未配置 xParse 凭据', 503);
         const bytes = await readBody(request, fileLimit);
         if (bytes.length === 0) throw new MergeError('不能上传空文件');
         if (!hasExpectedSignature(extension, bytes)) throw new MergeError('文件内容与扩展名不一致');
         const document = await xparseClient(
           { name, bytes },
-          { appId: env.TEXTIN_APP_ID, secretCode: env.TEXTIN_SECRET_CODE },
+          credentials,
         );
         sendJson(response, 200, { ok: true, document });
         return;
@@ -179,7 +282,7 @@ export function createAppServer({
       sendJson(response, 404, { ok: false, error: { message: '未找到该页面或接口' } });
     } catch (error) {
       const statusCode = Number(error.statusCode) || 500;
-      sendJson(response, statusCode, { ok: false, error: { message: safeMessage(error) } });
+      sendJson(response, statusCode, { ok: false, error: safeErrorPayload(error) });
     }
   });
 }
@@ -187,9 +290,26 @@ export function createAppServer({
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const portFlag = process.argv.indexOf('--port');
   const port = Number(portFlag >= 0 ? process.argv[portFlag + 1] : process.env.PORT || 43173);
-  const server = createAppServer();
+  const credentialStore = process.platform === 'win32' ? createCredentialStore() : null;
+  const environmentCredentials = internalCredentials({
+    appId: process.env.TEXTIN_APP_ID,
+    secretCode: process.env.TEXTIN_SECRET_CODE,
+  });
+  let initialCredentials = environmentCredentials;
+  let credentialsSaved = false;
+  let credentialStorageError = false;
+  if (!initialCredentials && credentialStore) {
+    try {
+      initialCredentials = await credentialStore.load();
+      credentialsSaved = Boolean(initialCredentials);
+    } catch {
+      credentialStorageError = true;
+      console.warn('Windows 加密凭据未能读取，请在页面中重新配置');
+    }
+  }
+  const server = createAppServer({ credentialStore, initialCredentials, credentialsSaved, credentialStorageError });
   server.listen(port, '127.0.0.1', () => {
     console.log(`通知清单已启动：http://127.0.0.1:${port}`);
-    console.log(process.env.TEXTIN_APP_ID && process.env.TEXTIN_SECRET_CODE ? '实时 xParse：已配置' : '实时 xParse：未配置，可使用示例材料');
+    console.log(initialCredentials ? '实时 xParse：已配置' : '实时 xParse：未配置，可在页面中设置');
   });
 }

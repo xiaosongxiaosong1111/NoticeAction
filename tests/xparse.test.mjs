@@ -31,6 +31,52 @@ test('sanitizes vendor URLs and request identifiers', () => {
   assert.ok(!serialized.includes('remove-me'));
 });
 
+test('infers the current year for a dated chat screenshot that omits the year', () => {
+  const document = sanitizeXParsePayload('群聊改期.png', new Uint8Array([4, 2]), {
+    code: 200,
+    data: {
+      markdown: '10月24日 16:08 二次通知：研学活动改为10月28日，集合时间改为8:30。',
+      elements: [{
+        element_id: 'chat-date',
+        page_number: 1,
+        text: '10月24日 16:08 二次通知：研学活动改为10月28日，集合时间改为8:30。',
+      }],
+    },
+  });
+
+  assert.equal(document.issued_at, `${new Date().getFullYear()}-10-24T16:08:00+08:00`);
+});
+
+test('stamps undated parsed documents in receive order without inventing a publication date', () => {
+  const payload = (text) => ({
+    code: 200,
+    data: {
+      markdown: text,
+      elements: [{ element_id: 'sheet', page_number: 1, text }],
+    },
+  });
+
+  const first = sanitizeXParsePayload('旧分组表.xlsx', new Uint8Array([1]), payload('组别 成员 负责方式 旧版'));
+  const second = sanitizeXParsePayload('新分组表.xlsx', new Uint8Array([2]), payload('组别 成员 负责方式 新版'));
+
+  assert.equal(first.issued_at, null);
+  assert.equal(second.issued_at, null);
+  assert.match(first.parsed_at, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+  assert.ok(Date.parse(second.parsed_at) > Date.parse(first.parsed_at));
+});
+
+test('does not mistake a following business time for the publication time', () => {
+  const document = sanitizeXParsePayload('群聊补充.png', new Uint8Array([5, 3]), {
+    code: 200,
+    data: {
+      markdown: '10月24日 二次通知：集合时间改为8:30。',
+      elements: [{ element_id: 'chat', page_number: 1, text: '10月24日 二次通知：集合时间改为8:30。' }],
+    },
+  });
+
+  assert.equal(document.issued_at, `${new Date().getFullYear()}-10-24T00:00:00+08:00`);
+});
+
 test('accepts only bounded finite coordinate arrays and copies them', () => {
   const elementCoordinates = Array.from({ length: 16 }, (_, index) => index / 2);
   const cellCoordinates = [0, 0, 10, 0, 10, 10, 0, 10];
@@ -132,6 +178,29 @@ test('maps provider failures to a safe error', async () => {
       { appId: 'app', secretCode: 'secret', fetchImpl },
     ),
     (error) => error instanceof XParseError && error.message === 'xParse 解析失败，请检查服务配置或稍后重试',
+  );
+});
+
+test('maps invalid TextIn credentials to an actionable safe error', async () => {
+  const fetchImpl = async () => new Response(JSON.stringify({
+    code: 40102,
+    message: 'invalid secret: do-not-leak',
+  }), { status: 200 });
+
+  await assert.rejects(
+    parseFile(
+      { name: '通知.pdf', bytes: new Uint8Array([1]) },
+      { appId: 'app', secretCode: 'secret', fetchImpl },
+    ),
+    (error) => {
+      assert.ok(error instanceof XParseError);
+      assert.equal(error.statusCode, 401);
+      assert.equal(error.code, 'TEXTIN_CREDENTIALS_INVALID');
+      assert.match(error.message, /解析设置/);
+      assert.match(error.message, /AppID \/ Secret Code/);
+      assert.ok(!error.message.includes('do-not-leak'));
+      return true;
+    },
   );
 });
 

@@ -3,6 +3,8 @@ import { extname } from 'node:path';
 
 export const XPARSE_ENDPOINT = 'https://api.textin.com/api/v1/xparse/parse/sync';
 
+let lastParsedAtMilliseconds = 0;
+
 const XPARSE_LIMITS = Object.freeze({
   elements: 5_000,
   markdownCharacters: 2_000_000,
@@ -18,11 +20,26 @@ const XPARSE_LIMITS = Object.freeze({
 });
 
 export class XParseError extends Error {
-  constructor(message = 'xParse 解析失败，请检查服务配置或稍后重试') {
+  constructor(
+    message = 'xParse 解析失败，请检查服务配置或稍后重试',
+    { statusCode = 502, code = 'TEXTIN_PARSE_FAILED' } = {},
+  ) {
     super(message);
     this.name = 'XParseError';
-    this.statusCode = 502;
+    this.statusCode = statusCode;
+    this.code = code;
   }
+}
+
+function providerFailure(payload) {
+  const code = Number(payload?.code);
+  if (code === 40101 || code === 40102) {
+    return new XParseError(
+      'TextIn 拒绝了当前 AppID / Secret Code。请在“解析设置”中重新保存工作台里的最新凭据。',
+      { statusCode: 401, code: 'TEXTIN_CREDENTIALS_INVALID' },
+    );
+  }
+  return new XParseError();
 }
 
 function limitError() {
@@ -119,11 +136,19 @@ function sanitizeElement(element) {
 }
 
 function inferIssuedAt(data) {
-  const text = [data.markdown, ...(data.elements ?? []).map((element) => element.text)].join('\n').replace(/\s+/g, '');
-  const date = text.match(/(20\d{2})年(\d{1,2})月(\d{1,2})日/);
-  if (!date) return '1970-01-01T00:00:00+08:00';
-  const time = text.match(/(?:班主任[^\d]{0,12})?(\d{1,2}):(\d{2})/);
-  return `${date[1]}-${String(date[2]).padStart(2, '0')}-${String(date[3]).padStart(2, '0')}T${String(time?.[1] ?? '00').padStart(2, '0')}:${time?.[2] ?? '00'}:00+08:00`;
+  const lines = [data.markdown, ...(data.elements ?? []).map((element) => element.text)]
+    .flatMap((text) => String(text ?? '').split(/\r?\n/));
+  const lineIndex = lines.findIndex((line) => /^\s*(?:[#>*-]\s*)?(?:20\d{2}年)?\d{1,2}月\d{1,2}日(?=\s|$)/.test(line));
+  if (lineIndex < 0) return null;
+  const date = lines[lineIndex].match(/^\s*(?:[#>*-]\s*)?(?:(20\d{2})年)?(\d{1,2})月(\d{1,2})日(?=\s|$)/);
+  const [year, month, day] = [date[1] ?? new Date().getFullYear(), date[2], date[3]];
+  const time = lines[lineIndex].slice(date[0].length).match(/^\s+(\d{1,2}):(\d{2})(?=\s|$)/);
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}T${String(time?.[1] ?? '00').padStart(2, '0')}:${time?.[2] ?? '00'}:00+08:00`;
+}
+
+function nextParsedAt() {
+  lastParsedAtMilliseconds = Math.max(Date.now(), lastParsedAtMilliseconds + 1);
+  return new Date(lastParsedAtMilliseconds).toISOString();
 }
 
 export function sanitizeXParsePayload(name, bytes, payload) {
@@ -138,6 +163,7 @@ export function sanitizeXParsePayload(name, bytes, payload) {
     name,
     format: extname(name).slice(1).toLowerCase(),
     issued_at: inferIssuedAt({ markdown: bounded.markdown, elements }),
+    parsed_at: nextParsedAt(),
     page_count: Math.max(1, ...elements.map((element) => element.page_number || 1)),
     markdown: bounded.markdown,
     elements,
@@ -170,7 +196,7 @@ export async function parseFile(
       signal: AbortSignal.timeout(timeoutMs),
     });
     const payload = await response.json();
-    if (!response.ok || payload?.code !== 200) throw new XParseError();
+    if (!response.ok || payload?.code !== 200) throw providerFailure(payload);
     return sanitizeXParsePayload(name, bytes, payload);
   } catch (error) {
     if (error instanceof XParseError) throw error;

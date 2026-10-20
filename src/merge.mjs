@@ -75,6 +75,52 @@ function assertContext(context) {
   if (context.as_of && Number.isNaN(Date.parse(context.as_of))) throw new MergeError('as_of 不是有效时间');
 }
 
+function reliableIssuedAt(value) {
+  if (typeof value !== 'string' || value.length > 64) return null;
+  if (!/^20\d{2}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?(?:Z|[+-]\d{2}:\d{2})$/.test(value)) return null;
+  const milliseconds = Date.parse(value);
+  return Number.isNaN(milliseconds) ? null : milliseconds;
+}
+
+function parsedOrder(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) return null;
+  const milliseconds = Date.parse(value);
+  return Number.isNaN(milliseconds) ? null : milliseconds;
+}
+
+function documentOrder(document) {
+  const issued = reliableIssuedAt(document.issued_at);
+  const parsed = parsedOrder(document.parsed_at);
+  return { document, issued, parsed };
+}
+
+function compareOptionalTimestamp(left, right) {
+  if (left === right) return 0;
+  if (left === null) return -1;
+  if (right === null) return 1;
+  return left - right;
+}
+
+function compareDocumentOrder(leftOrder, rightOrder, useIssuedAt) {
+  const primaryDifference = useIssuedAt
+    ? leftOrder.issued - rightOrder.issued
+    : compareOptionalTimestamp(leftOrder.parsed, rightOrder.parsed);
+  if (primaryDifference !== 0) return primaryDifference;
+  if (useIssuedAt) {
+    const parsedDifference = compareOptionalTimestamp(leftOrder.parsed, rightOrder.parsed);
+    if (parsedDifference !== 0) return parsedDifference;
+  }
+  return leftOrder.document.document_id.localeCompare(rightOrder.document.document_id);
+}
+
+function orderDocuments(documents) {
+  const order = documents.map(documentOrder);
+  const useIssuedAt = order.every((entry) => entry.issued !== null);
+  return order
+    .sort((left, right) => compareDocumentOrder(left, right, useIssuedAt))
+    .map((entry) => entry.document);
+}
+
 function sortedDocuments(documents) {
   if (!Array.isArray(documents) || documents.length === 0) throw new MergeError('至少需要一份解析文档');
   if (documents.length > MERGE_LIMITS.documents) throw mergeLimitError();
@@ -85,17 +131,71 @@ function sortedDocuments(documents) {
     assertDocumentBounds(document);
     ids.add(document.document_id);
   }
-  return [...documents].sort((left, right) =>
-    String(left.issued_at ?? '').localeCompare(String(right.issued_at ?? '')) || left.document_id.localeCompare(right.document_id),
-  );
+  return orderDocuments(documents);
 }
 
 function documentText(document) {
   return [document.markdown, ...document.elements.map((element) => element.text)].filter(Boolean).join('\n');
 }
 
-function findDocument(documents, pattern) {
-  return documents.find((document) => pattern.test(documentText(document)));
+function findLatestMatchingDocument(documents, predicate) {
+  const candidates = documents.filter(predicate);
+  return candidates.length > 0 ? orderDocuments(candidates).at(-1) : undefined;
+}
+
+function findLatestDocument(documents, pattern) {
+  return findLatestMatchingDocument(documents, (document) => pattern.test(documentText(document)));
+}
+
+function findLatestAdjustmentAfter(documents, base, predicate) {
+  const candidates = [base, ...documents.filter(
+    (document) => document.document_id !== base.document_id && predicate(document),
+  )];
+  const latest = orderDocuments(candidates).at(-1);
+  return latest.document_id === base.document_id ? undefined : latest;
+}
+
+function isCompleteBaseNotice(document) {
+  const text = compact(documentText(document));
+  return /(?:研学活动通知|无论参加与否)/.test(text)
+    && /活动日期[|：:]*\d{4}年\d{1,2}月\d{1,2}日/.test(text)
+    && /集合时间/.test(text)
+    && /集合地点/.test(text)
+    && /活动地点/.test(text)
+    && /(?:预计返校|返校时间)/.test(text)
+    && /电子回执/.test(text)
+    && /活动费用\d+元\/人/.test(text);
+}
+
+function dateAdjustmentParts(document) {
+  const text = compact(documentText(document));
+  const match = text.match(
+    /原定(?:于)?(?:(20\d{2})年)?(\d{1,2})月(\d{1,2})日([^。；！？]{0,120}?)(?:现)?改为(?:(20\d{2})年)?(\d{1,2})月(\d{1,2})日/,
+  );
+  if (!match) return null;
+  const sentenceStart = Math.max(
+    text.lastIndexOf('。', match.index - 1),
+    text.lastIndexOf('；', match.index - 1),
+    text.lastIndexOf('！', match.index - 1),
+    text.lastIndexOf('？', match.index - 1),
+  ) + 1;
+  const sentenceEnds = ['。', '；', '！', '？']
+    .map((punctuation) => text.indexOf(punctuation, match.index + match[0].length))
+    .filter((index) => index >= 0);
+  const sentenceEnd = sentenceEnds.length > 0 ? Math.min(...sentenceEnds) : text.length;
+  const sentenceText = text.slice(sentenceStart, sentenceEnd);
+  const leadingContext = text.slice(sentenceStart, match.index);
+  if (/活动日期(?:保持)?不变/.test(sentenceText)) return null;
+  const activityLeadsIntoDate = /(?:研学活动|活动日期)(?:调整|变更)?[：:]?$/.test(leadingContext);
+  if (!activityLeadsIntoDate && !/(?:研学活动|活动日期)/.test(match[4])) return null;
+  return {
+    oldYear: match[1] ?? '',
+    oldMonth: match[2],
+    oldDay: match[3],
+    newYear: match[5] ?? '',
+    newMonth: match[6],
+    newDay: match[7],
+  };
 }
 
 function evidence(document, needles) {
@@ -167,6 +267,15 @@ function completedAction(context, kind) {
   return (context.completed_actions ?? []).find((action) => action.kind === kind);
 }
 
+function currentEventValue(context, field, fallback) {
+  const value = context?.current_event?.[field];
+  if (typeof value !== 'string' || value.length > 200) return fallback;
+  const trimmed = value.trim();
+  if (field === 'date' && !/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return fallback;
+  if (field === 'meet_time' && !/^\d{2}:\d{2}$/.test(trimmed)) return fallback;
+  return trimmed || fallback;
+}
+
 function resolvedSubmission(id, label, completion, sourceEvidence, extra = {}) {
   return {
     id,
@@ -182,11 +291,37 @@ function resolvedSubmission(id, label, completion, sourceEvidence, extra = {}) {
 export function mergeDocuments(inputDocuments, context) {
   assertContext(context);
   const documents = sortedDocuments(inputDocuments);
-  const base = findDocument(documents, /研学活动通知|无论参加与否/);
+  const base = findLatestMatchingDocument(documents, isCompleteBaseNotice);
   if (!base) throw new MergeError('请先上传包含活动安排的基础通知');
-  const groupDocument = findDocument(documents, /组别[\s\S]*成员[\s\S]*负责方式/);
-  const adjustment = findDocument(documents, /集合地点由[“"][^”"]+[”"]改为/);
-  const weather = findDocument(documents, /研学改期|原定\s*\d+月\d+日[\s\S]*改为\s*\d+月\d+日/);
+  const groupDocument = findLatestDocument(documents, /组别[\s\S]*成员[\s\S]*负责方式/);
+  const locationAdjustment = findLatestAdjustmentAfter(
+    documents,
+    base,
+    (document) => /集合地点由[“"][^”"]+[”"]改为/.test(documentText(document)),
+  );
+  const trashAdjustment = findLatestDocument(documents, /加厚垃圾袋不用准备/);
+  const hatAdjustment = findLatestDocument(documents, /蓝色帽子照常携带/);
+  const dateAdjustment = findLatestAdjustmentAfter(documents, base, (document) => dateAdjustmentParts(document));
+  const timeAdjustment = findLatestAdjustmentAfter(
+    documents,
+    base,
+    (document) => /集合时间由\s*\d{1,2}:\d{2}\s*改为\s*\d{1,2}:\d{2}/.test(documentText(document)),
+  );
+  const inabilityNotice = findLatestAdjustmentAfter(
+    documents,
+    base,
+    (document) => /不能参加改期活动的/.test(documentText(document)),
+  );
+  const noRepeatNotice = findLatestAdjustmentAfter(
+    documents,
+    base,
+    (document) => /已交回执和费用无需重复提交/.test(documentText(document)),
+  );
+  const stableEventNotice = findLatestAdjustmentAfter(
+    documents,
+    base,
+    (document) => /活动地点和其他准备要求不变/.test(documentText(document)),
+  );
   const baseText = documentText(base);
   const baseCompact = compact(baseText);
   const titleElement = base.elements.find((element) => /研学活动通知/.test(element.text));
@@ -207,6 +342,9 @@ export function mergeDocuments(inputDocuments, context) {
   const feeMatch = requiredMatch(baseCompact, /活动费用(\d+)元\/人/, '活动费用');
   const amountCny = Number(feeMatch[1]);
   const paymentNeedle = `${amountCny}元/人`;
+  const currentDate = currentEventValue(context, 'date', baseDate);
+  const currentMeetTime = currentEventValue(context, 'meet_time', baseTime);
+  const currentMeetLocation = currentEventValue(context, 'meet_location', baseLocation);
 
   let eventDate = baseDate;
   let meetTime = baseTime;
@@ -215,35 +353,35 @@ export function mergeDocuments(inputDocuments, context) {
   let meetTimeEvidence = evidence(base, baseTimeNeedle);
   let meetLocationEvidence = evidence(base, baseLocation);
   const changes = [];
-  if (weather) {
-    const text = compact(documentText(weather));
-    const year = Number(weather.issued_at?.slice(0, 4) || dateMatch[1]);
-    const changedDate = requiredMatch(text, /原定(\d{1,2})月(\d{1,2})日[^。]*?改为(\d{1,2})月(\d{1,2})日/, '改期日期');
-    eventDate = isoDate(year, changedDate[3], changedDate[4]);
-    const oldDateNeedle = `${changedDate[1]}月${changedDate[2]}日`;
-    const newDateNeedle = `${changedDate[3]}月${changedDate[4]}日`;
+  if (dateAdjustment) {
+    const changedDate = dateAdjustmentParts(dateAdjustment);
+    const year = Number(changedDate.newYear || dateAdjustment.issued_at?.slice(0, 4) || dateMatch[1]);
+    eventDate = isoDate(year, changedDate.newMonth, changedDate.newDay);
+    const oldDateNeedle = `${changedDate.oldMonth}月${changedDate.oldDay}日`;
+    const newDateNeedle = `${changedDate.newMonth}月${changedDate.newDay}日`;
+    dateEvidence = [...dateEvidence, ...evidence(dateAdjustment, [oldDateNeedle, newDateNeedle])];
+    changes.push({ id: 'event_date', kind: 'modified', field: 'event.date', label: '活动日期', before: currentDate, after: eventDate, evidence: dateEvidence });
+  }
+  if (timeAdjustment) {
+    const text = compact(documentText(timeAdjustment));
     const changedTime = requiredMatch(text, /集合时间由(\d{1,2}):(\d{2})改为(\d{1,2}):(\d{2})/, '变更后的集合时间');
     meetTime = `${pad(changedTime[3])}:${changedTime[4]}`;
     const oldTimeNeedle = `${changedTime[1]}:${changedTime[2]}`;
     const newTimeNeedle = `${changedTime[3]}:${changedTime[4]}`;
-    dateEvidence = [...dateEvidence, ...evidence(weather, [oldDateNeedle, newDateNeedle])];
-    meetTimeEvidence = [...meetTimeEvidence, ...evidence(weather, [oldTimeNeedle, newTimeNeedle])];
-    changes.push(
-      { id: 'event_date', kind: 'modified', field: 'event.date', label: '活动日期', before: baseDate, after: eventDate, evidence: dateEvidence },
-      { id: 'meet_time', kind: 'modified', field: 'event.meet_time', label: '集合时间', before: baseTime, after: meetTime, evidence: meetTimeEvidence },
-    );
+    meetTimeEvidence = [...meetTimeEvidence, ...evidence(timeAdjustment, [oldTimeNeedle, newTimeNeedle])];
+    changes.push({ id: 'meet_time', kind: 'modified', field: 'event.meet_time', label: '集合时间', before: currentMeetTime, after: meetTime, evidence: meetTimeEvidence });
   }
-  if (adjustment) {
-    const locationMatch = requiredMatch(compact(documentText(adjustment)), /集合地点由[“"]([^”"]+)[”"]改为[“"]([^”"]+)[”"]/, '变更后的集合地点');
+  if (locationAdjustment) {
+    const locationMatch = requiredMatch(compact(documentText(locationAdjustment)), /集合地点由[“"]([^”"]+)[”"]改为[“"]([^”"]+)[”"]/, '变更后的集合地点');
     meetLocation = locationMatch[2];
-    meetLocationEvidence = [...meetLocationEvidence, ...evidence(adjustment, [locationMatch[1], locationMatch[2]])];
+    meetLocationEvidence = [...meetLocationEvidence, ...evidence(locationAdjustment, [locationMatch[1], locationMatch[2]])];
     changes.push({
       id: 'meet_location',
       kind: 'modified',
       field: 'event.meet_location',
       label: '集合地点',
-      before: locationMatch[1],
-      after: locationMatch[2],
+      before: currentMeetLocation,
+      after: meetLocation,
       evidence: meetLocationEvidence,
     });
   }
@@ -255,7 +393,7 @@ export function mergeDocuments(inputDocuments, context) {
   const membership = groupItems(groupDocument, context.student.name);
   const items = [...baseItems, ...membership.items.map((item) => ({
     ...item,
-    status: adjustment && compact(documentText(adjustment)).includes(`${compact(item.name)}不用准备`) ? 'cancelled' : 'required',
+    status: trashAdjustment && item.name === '加厚垃圾袋' ? 'cancelled' : 'required',
     evidence: evidence(groupDocument, item.name),
   }))];
   const trashBags = items.find((item) => item.name === '加厚垃圾袋');
@@ -267,14 +405,14 @@ export function mergeDocuments(inputDocuments, context) {
       label: '加厚垃圾袋',
       before: `需要准备 ${trashBags.quantity}`,
       after: '不用准备',
-      evidence: [...trashBags.evidence, ...evidence(adjustment, '加厚垃圾袋不用准备')],
+      evidence: [...trashBags.evidence, ...evidence(trashAdjustment, '加厚垃圾袋不用准备')],
     });
   }
 
   let unableDue = '';
-  if (weather) {
-    const text = compact(documentText(weather));
-    const year = Number(weather.issued_at?.slice(0, 4) || dateMatch[1]);
+  if (inabilityNotice) {
+    const text = compact(documentText(inabilityNotice));
+    const year = Number(inabilityNotice.issued_at?.slice(0, 4) || dateMatch[1]);
     const unableMatch = requiredMatch(text, /不能参加改期活动的[^\d]*(\d{1,2})月(\d{1,2})日(\d{1,2}):(\d{2})前私聊/, '不能参加时的联系截止时间');
     unableDue = isoDateTime(isoDate(year, unableMatch[1], unableMatch[2]), `${pad(unableMatch[3])}:${unableMatch[4]}`);
     changes.push({
@@ -284,7 +422,7 @@ export function mergeDocuments(inputDocuments, context) {
       label: '不能参加时联系老师',
       before: '无',
       after: `${unableDue.slice(5, 16).replace('T', ' ')} 前私聊班主任`,
-      evidence: evidence(weather, '不能参加改期活动的'),
+      evidence: evidence(inabilityNotice, '不能参加改期活动的'),
     });
   }
 
@@ -292,34 +430,64 @@ export function mergeDocuments(inputDocuments, context) {
     .filter((name) => baseCompact.includes(compact(name)))
     .map((name) => ({ text: `不得携带${name}`, evidence: evidence(base, name) }));
   const resolvedActions = [];
-  const acknowledgement = adjustment && compact(documentText(adjustment)).match(
+  const acknowledgementDocument = findLatestMatchingDocument(documents, (document) => {
+    const text = compact(documentText(document));
+    return text.includes(`${compact(context.student.name)}家长`) && text.includes('收到');
+  });
+  const acknowledgement = acknowledgementDocument && compact(documentText(acknowledgementDocument)).match(
     new RegExp(`${escapeRegex(compact(context.student.name))}家长(\\d{1,2}):(\\d{2})收到`),
   );
   if (acknowledgement) {
-    const issuedDate = String(adjustment.issued_at).slice(0, 10);
+    const issuedDate = reliableIssuedAt(acknowledgementDocument.issued_at) === null
+      ? ''
+      : acknowledgementDocument.issued_at.slice(0, 10);
     resolvedActions.push({
       id: 'acknowledge_adjustment',
       label: '群接龙确认收到',
       status: 'completed',
       completed_by: `${context.student.name}家长`,
-      completed_at: isoDateTime(issuedDate, `${pad(acknowledgement[1])}:${acknowledgement[2]}`),
-      evidence: evidence(adjustment, `${context.student.name}家长`),
+      ...(issuedDate ? { completed_at: isoDateTime(issuedDate, `${pad(acknowledgement[1])}:${acknowledgement[2]}`) } : {}),
+      evidence: evidence(acknowledgementDocument, `${context.student.name}家长`),
     });
   }
-  const noRepeatEvidence = weather ? evidence(weather, '已交回执和费用无需重复提交') : evidence(base, '电子回执');
-  const receiptCompletion = completedAction(context, 'receipt');
-  const paymentCompletion = completedAction(context, 'payment');
-  if (receiptCompletion) resolvedActions.push(resolvedSubmission('submit_receipt', '提交电子回执', receiptCompletion, noRepeatEvidence));
+  const noRepeatEvidence = noRepeatNotice ? evidence(noRepeatNotice, '已交回执和费用无需重复提交') : evidence(base, '电子回执');
+  const receiptCandidate = completedAction(context, 'receipt');
+  const receiptCompletion = typeof receiptCandidate?.due_at === 'string' && receiptCandidate.due_at === receiptDue
+    ? receiptCandidate
+    : null;
+  const paymentCandidate = completedAction(context, 'payment');
+  const paymentCompletion = typeof paymentCandidate?.amount_cny === 'number'
+    && Number.isFinite(paymentCandidate.amount_cny)
+    && paymentCandidate.amount_cny === amountCny
+    ? paymentCandidate
+    : null;
+  if (receiptCompletion) {
+    resolvedActions.push(resolvedSubmission(
+      'submit_receipt',
+      '提交电子回执',
+      receiptCompletion,
+      noRepeatEvidence,
+      { due_at: receiptDue },
+    ));
+  }
   if (paymentCompletion) resolvedActions.push(resolvedSubmission('pay_fee', `缴纳活动费 ${amountCny} 元`, paymentCompletion, noRepeatEvidence, { amount_cny: amountCny }));
   const needsConfirmation = [];
-  if (weather && !receiptCompletion) needsConfirmation.push({ kind: 'receipt', message: '请确认此前是否已提交电子回执；已提交则无需重复提交', evidence: noRepeatEvidence });
-  if (weather && !paymentCompletion && context.student.participating !== false) needsConfirmation.push({ kind: 'payment', message: `请确认此前是否已缴纳 ${amountCny} 元活动费；已缴纳则无需重复缴费`, evidence: noRepeatEvidence });
+  if (!receiptCompletion && (noRepeatNotice || receiptCandidate)) {
+    needsConfirmation.push({
+      kind: 'receipt',
+      message: receiptCandidate
+        ? '回执要求或截止时间已更新，请确认是否已按当前通知提交电子回执'
+        : '请确认此前是否已提交电子回执；已提交则无需重复提交',
+      evidence: noRepeatEvidence,
+    });
+  }
+  if (noRepeatNotice && !paymentCompletion && context.student.participating !== false) needsConfirmation.push({ kind: 'payment', message: `请确认此前是否已缴纳 ${amountCny} 元活动费；已缴纳则无需重复缴费`, evidence: noRepeatEvidence });
 
   const result = {
     schema_version: 1,
     event: {
       title,
-      status: weather ? 'rescheduled' : 'scheduled',
+      status: dateAdjustment ? 'rescheduled' : 'scheduled',
       date: eventDate,
       meet_time: meetTime,
       meet_location: meetLocation,
@@ -330,8 +498,8 @@ export function mergeDocuments(inputDocuments, context) {
         date: dateEvidence,
         meet_time: meetTimeEvidence,
         meet_location: meetLocationEvidence,
-        destination: weather ? [...evidence(base, destination), ...evidence(weather, '活动地点和其他准备要求不变')] : evidence(base, destination),
-        return_time: weather ? [...evidence(base, returnTimeNeedle), ...evidence(weather, ['返校时间', returnTimeNeedle])] : evidence(base, returnTimeNeedle),
+        destination: stableEventNotice ? [...evidence(base, destination), ...evidence(stableEventNotice, '活动地点和其他准备要求不变')] : evidence(base, destination),
+        return_time: stableEventNotice ? [...evidence(base, returnTimeNeedle), ...evidence(stableEventNotice, ['返校时间', returnTimeNeedle])] : evidence(base, returnTimeNeedle),
       },
     },
     student: { ...context.student, group: membership.group },
@@ -340,14 +508,14 @@ export function mergeDocuments(inputDocuments, context) {
     items,
     constraints,
     changes,
-    conditional: unableDue ? { id: 'unable_to_attend', due_at: unableDue, condition: `不能参加${eventDate}改期活动`, action: '私聊班主任王老师', evidence: evidence(weather, '不能参加改期活动的') } : null,
+    conditional: unableDue ? { id: 'unable_to_attend', due_at: unableDue, condition: `不能参加${eventDate}改期活动`, action: '私聊班主任王老师', evidence: evidence(inabilityNotice, '不能参加改期活动的') } : null,
     resolved_actions: resolvedActions,
     needs_confirmation: needsConfirmation,
     stable_facts: [
-      { label: '返校时间', value: returnTime, evidence: weather ? evidence(weather, ['返校时间', returnTimeNeedle]) : evidence(base, returnTimeNeedle) },
-      ...(items.some((item) => item.name === '蓝色帽子') ? [{ label: '蓝色帽子', value: '照常携带', evidence: adjustment ? evidence(adjustment, '蓝色帽子照常携带') : evidence(groupDocument, '蓝色帽子') }] : []),
+      { label: '返校时间', value: returnTime, evidence: stableEventNotice ? evidence(stableEventNotice, ['返校时间', returnTimeNeedle]) : evidence(base, returnTimeNeedle) },
+      ...(items.some((item) => item.name === '蓝色帽子') ? [{ label: '蓝色帽子', value: '照常携带', evidence: hatAdjustment ? evidence(hatAdjustment, '蓝色帽子照常携带') : evidence(groupDocument, '蓝色帽子') }] : []),
     ],
-    documents: documents.map(({ document_id, name, issued_at }) => ({ document_id, name, issued_at })),
+    documents: documents.map(({ document_id, name, issued_at, parsed_at }) => ({ document_id, name, issued_at, parsed_at })),
     as_of: context.as_of ?? new Date().toISOString(),
   };
   result.summary = {
@@ -395,7 +563,7 @@ export function finalizePlan(analysis, decisions) {
   const statusAt = (dueAt) => Date.parse(dueAt) < asOf ? 'overdue' : 'pending';
   if (!resolved.some((item) => item.id === 'submit_receipt')) {
     if (submissionStates.receipt === 'submitted') {
-      resolved.push({ id: 'submit_receipt', label: '提交电子回执', status: 'completed', repeat_required: false, evidence: plan.needs_confirmation.find((item) => item.kind === 'receipt')?.evidence ?? plan.receipt.evidence });
+      resolved.push({ id: 'submit_receipt', label: '提交电子回执', due_at: plan.receipt.due_at, status: 'completed', repeat_required: false, evidence: plan.needs_confirmation.find((item) => item.kind === 'receipt')?.evidence ?? plan.receipt.evidence });
     } else {
       activeTodos.push({ id: 'submit_receipt', title: '提交电子回执', due_at: plan.receipt.due_at, status: statusAt(plan.receipt.due_at), condition: '无论参加与否', evidence: plan.receipt.evidence });
     }
@@ -404,7 +572,7 @@ export function finalizePlan(analysis, decisions) {
     if (submissionStates.payment === 'submitted') {
       resolved.push({ id: 'pay_fee', label: `缴纳活动费 ${plan.payment.amount_cny} 元`, amount_cny: plan.payment.amount_cny, status: 'completed', repeat_required: false, evidence: plan.needs_confirmation.find((item) => item.kind === 'payment')?.evidence ?? plan.payment.evidence });
     } else {
-      activeTodos.push({ id: 'pay_fee', title: `缴纳活动费 ${plan.payment.amount_cny} 元`, due_at: plan.payment.due_at, status: statusAt(plan.payment.due_at), condition: '仅参加活动时', evidence: plan.payment.evidence });
+      activeTodos.push({ id: 'pay_fee', title: `缴纳活动费 ${plan.payment.amount_cny} 元`, amount_cny: plan.payment.amount_cny, due_at: plan.payment.due_at, status: statusAt(plan.payment.due_at), condition: '仅参加活动时', evidence: plan.payment.evidence });
     }
   }
   if (plan.student.participating !== false) {

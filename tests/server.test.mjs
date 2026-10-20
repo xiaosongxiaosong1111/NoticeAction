@@ -4,6 +4,7 @@ import { request as httpRequest } from 'node:http';
 import test from 'node:test';
 
 import { createAppServer } from '../server.mjs';
+import { XParseError } from '../src/xparse-client.mjs';
 
 const documents = JSON.parse(await readFile(new URL('./fixtures/parsed-documents.json', import.meta.url), 'utf8'));
 
@@ -21,7 +22,10 @@ async function withServer(options, run) {
 test('serves health and the competition demo without credentials', async () => {
   await withServer({ demoDocuments: documents, env: {} }, async (origin) => {
     const health = await fetch(`${origin}/api/health`).then((response) => response.json());
-    assert.deepEqual(health, { ok: true, live_parse_configured: false });
+    assert.equal(health.ok, true);
+    assert.equal(health.service_id, 'notice-action-local-v1');
+    assert.equal(health.credential_management_version, 1);
+    assert.equal(health.live_parse_configured, false);
     const demoResponse = await fetch(`${origin}/api/demo?child_name=${encodeURIComponent('林小满')}`);
     const demo = await demoResponse.json();
     assert.equal(demoResponse.status, 200);
@@ -33,6 +37,249 @@ test('serves health and the competition demo without credentials', async () => {
     const nonParticipant = await fetch(`${origin}/api/demo?child_name=${encodeURIComponent('林小满')}&participating=false`).then((response) => response.json());
     assert.equal(nonParticipant.analysis.student.participating, false);
     assert.deepEqual(nonParticipant.analysis.needs_confirmation.map((item) => item.kind), ['receipt']);
+  });
+});
+
+test('saves, uses, and clears encrypted browser credentials without echoing them', async () => {
+  let saved = null;
+  let received = null;
+  const credentialStore = {
+    save: async (credentials) => { saved = { ...credentials }; },
+    clear: async () => { saved = null; },
+  };
+  const xparseClient = async ({ name }, credentials) => {
+    received = { ...credentials };
+    return { ...documents[0], name };
+  };
+
+  await withServer({ demoDocuments: documents, env: {}, credentialStore, xparseClient }, async (origin) => {
+    const saveResponse = await fetch(`${origin}/api/credentials`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ app_id: 'browser-app-id', secret_code: 'browser-secret-code' }),
+    });
+    const saveText = await saveResponse.text();
+    assert.equal(saveResponse.status, 200);
+    assert.ok(!saveText.includes('browser-app-id'));
+    assert.ok(!saveText.includes('browser-secret-code'));
+    assert.deepEqual(saved, { appId: 'browser-app-id', secretCode: 'browser-secret-code' });
+
+    const health = await fetch(`${origin}/api/health`).then((response) => response.json());
+    assert.equal(health.live_parse_configured, true);
+    assert.equal(health.credentials_saved, true);
+    assert.ok(!JSON.stringify(health).includes('browser-secret-code'));
+
+    const parsed = await fetch(`${origin}/api/parse?filename=notice.pdf`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/pdf' },
+      body: new TextEncoder().encode('%PDF-1.7'),
+    });
+    assert.equal(parsed.status, 200);
+    assert.deepEqual(received, { appId: 'browser-app-id', secretCode: 'browser-secret-code' });
+
+    const clearResponse = await fetch(`${origin}/api/credentials/clear`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    const clearText = await clearResponse.text();
+    assert.equal(clearResponse.status, 200);
+    assert.ok(!clearText.includes('browser-secret-code'));
+    assert.equal(saved, null);
+    assert.equal((await fetch(`${origin}/api/health`).then((response) => response.json())).live_parse_configured, false);
+    assert.equal((await fetch(`${origin}/api/parse?filename=notice.pdf`, {
+      method: 'POST', headers: { 'content-type': 'application/pdf' }, body: new TextEncoder().encode('%PDF-1.7'),
+    })).status, 503);
+  });
+});
+
+test('returns a safe machine-readable code for invalid TextIn credentials', async () => {
+  const xparseClient = async () => {
+    throw new XParseError('请重新配置凭据', {
+      statusCode: 401,
+      code: 'TEXTIN_CREDENTIALS_INVALID',
+    });
+  };
+
+  await withServer({
+    demoDocuments: documents,
+    env: { TEXTIN_APP_ID: 'app', TEXTIN_SECRET_CODE: 'secret' },
+    xparseClient,
+  }, async (origin) => {
+    const response = await fetch(`${origin}/api/parse?filename=notice.pdf`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/pdf' },
+      body: new TextEncoder().encode('%PDF-1.7'),
+    });
+    const body = await response.json();
+    assert.equal(response.status, 401);
+    assert.deepEqual(body, {
+      ok: false,
+      error: {
+        code: 'TEXTIN_CREDENTIALS_INVALID',
+        message: '请重新配置凭据',
+      },
+    });
+  });
+});
+
+test('serializes credential changes so a later clear wins over an earlier slow save', async () => {
+  let releaseSave;
+  let markSaveStarted;
+  let stored = null;
+  const saveGate = new Promise((resolve) => { releaseSave = resolve; });
+  const saveStarted = new Promise((resolve) => { markSaveStarted = resolve; });
+  const credentialStore = {
+    save: async (credentials) => {
+      markSaveStarted();
+      await saveGate;
+      stored = { ...credentials };
+    },
+    clear: async () => { stored = null; },
+  };
+
+  await withServer({ demoDocuments: documents, env: {}, credentialStore }, async (origin) => {
+    const saveRequest = fetch(`${origin}/api/credentials`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ app_id: 'slow-app', secret_code: 'slow-secret' }),
+    });
+    await saveStarted;
+
+    const clearRequest = fetch(`${origin}/api/credentials/clear`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    setTimeout(releaseSave, 100);
+
+    const [saveResponse, clearResponse] = await Promise.all([saveRequest, clearRequest]);
+    assert.equal(saveResponse.status, 200);
+    assert.equal(clearResponse.status, 200);
+    assert.equal(stored, null);
+    const health = await fetch(`${origin}/api/health`).then((response) => response.json());
+    assert.equal(health.live_parse_configured, false);
+    assert.equal(health.credentials_saved, false);
+  });
+});
+
+test('rejects unsafe credential configuration without calling the store', async () => {
+  let saves = 0;
+  let clears = 0;
+  const credentialStore = {
+    save: async () => { saves += 1; },
+    clear: async () => { clears += 1; },
+  };
+  await withServer({ demoDocuments: documents, env: {}, credentialStore }, async (origin) => {
+    const invalidPayloads = [
+      {},
+      { app_id: '', secret_code: 'secret' },
+      { app_id: 'app', secret_code: '   ' },
+      { app_id: 'app\r\nInjected', secret_code: 'secret' },
+      { app_id: 'a'.repeat(257), secret_code: 'secret' },
+      { app_id: 'app', secret_code: 's'.repeat(513) },
+    ];
+    for (const payload of invalidPayloads) {
+      const response = await fetch(`${origin}/api/credentials`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload),
+      });
+      assert.equal(response.status, 422);
+    }
+
+    const simple = await fetch(`${origin}/api/credentials`, {
+      method: 'POST', headers: { 'content-type': 'text/plain' }, body: '{}',
+    });
+    assert.equal(simple.status, 415);
+    const crossSite = await fetch(`${origin}/api/credentials`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: 'https://attacker.example' },
+      body: JSON.stringify({ app_id: 'app', secret_code: 'secret' }),
+    });
+    assert.equal(crossSite.status, 403);
+
+    const oversized = await fetch(`${origin}/api/credentials`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ app_id: 'app', secret_code: 's'.repeat(5_000) }),
+    });
+    assert.equal(oversized.status, 413);
+
+    const invalidClear = await fetch(`${origin}/api/credentials/clear`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"unexpected":true}',
+    });
+    assert.equal(invalidClear.status, 422);
+    assert.equal(saves, 0);
+    assert.equal(clears, 0);
+  });
+});
+
+test('keeps existing runtime credentials when encrypted storage fails', async () => {
+  let received = null;
+  const credentialStore = {
+    save: async () => { throw new Error('disk path and secret details'); },
+    clear: async () => {},
+  };
+  const xparseClient = async ({ name }, credentials) => {
+    received = { ...credentials };
+    return { ...documents[0], name };
+  };
+  await withServer({
+    demoDocuments: documents,
+    env: { TEXTIN_APP_ID: 'existing-app', TEXTIN_SECRET_CODE: 'existing-secret' },
+    credentialStore,
+    xparseClient,
+  }, async (origin) => {
+    const response = await fetch(`${origin}/api/credentials`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ app_id: 'new-app', secret_code: 'new-secret' }),
+    });
+    const text = await response.text();
+    assert.equal(response.status, 500);
+    assert.ok(!text.includes('disk path'));
+    assert.ok(!text.includes('new-secret'));
+
+    const parsed = await fetch(`${origin}/api/parse?filename=notice.pdf`, {
+      method: 'POST', headers: { 'content-type': 'application/pdf' }, body: new TextEncoder().encode('%PDF-1.7'),
+    });
+    assert.equal(parsed.status, 200);
+    assert.deepEqual(received, { appId: 'existing-app', secretCode: 'existing-secret' });
+  });
+});
+
+test('keeps current runtime credentials when clearing encrypted storage fails', async () => {
+  let received = null;
+  const credentialStore = {
+    save: async () => {},
+    clear: async () => { throw new Error('disk path and existing-secret details'); },
+  };
+  const xparseClient = async ({ name }, credentials) => {
+    received = { ...credentials };
+    return { ...documents[0], name };
+  };
+  await withServer({
+    demoDocuments: documents,
+    env: { TEXTIN_APP_ID: 'existing-app', TEXTIN_SECRET_CODE: 'existing-secret' },
+    credentialStore,
+    xparseClient,
+  }, async (origin) => {
+    const clearResponse = await fetch(`${origin}/api/credentials/clear`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+    });
+    const clearText = await clearResponse.text();
+    assert.equal(clearResponse.status, 500);
+    assert.ok(!clearText.includes('disk path'));
+    assert.ok(!clearText.includes('existing-secret'));
+
+    const health = await fetch(`${origin}/api/health`).then((response) => response.json());
+    assert.equal(health.live_parse_configured, true);
+    assert.equal(health.credential_storage_error, true);
+
+    const parsed = await fetch(`${origin}/api/parse?filename=notice.pdf`, {
+      method: 'POST', headers: { 'content-type': 'application/pdf' }, body: new TextEncoder().encode('%PDF-1.7'),
+    });
+    assert.equal(parsed.status, 200);
+    assert.deepEqual(received, { appId: 'existing-app', secretCode: 'existing-secret' });
   });
 });
 

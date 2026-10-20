@@ -39,7 +39,7 @@ function compactDocuments(documents) {
   if (!Array.isArray(documents)) return [];
   return documents
     .filter((document) => document && typeof document === 'object')
-    .map((document) => pick(document, ['document_id', 'name', 'issued_at']));
+    .map((document) => pick(document, ['document_id', 'name', 'issued_at', 'parsed_at']));
 }
 
 function compactChanges(changes) {
@@ -144,7 +144,7 @@ export function upsertPlan(records, plan, savedAt) {
   return newestFirst([record, ...records.filter((item) => item.id !== record.id)]);
 }
 
-export function setTaskCompleted(records, recordIdValue, taskId, completed) {
+export function setTaskCompleted(records, recordIdValue, taskId, completed, savedAt) {
   if (!Array.isArray(records)) throw new TypeError('records must be an array');
   return records.map((record) => {
     if (record.id !== recordIdValue) return record;
@@ -154,7 +154,7 @@ export function setTaskCompleted(records, recordIdValue, taskId, completed) {
       changed = true;
       return { ...task, completed: Boolean(completed) };
     })]));
-    return changed ? { ...record, ...groups } : record;
+    return changed ? { ...record, ...groups, saved_at: savedAtIso(savedAt) } : record;
   });
 }
 
