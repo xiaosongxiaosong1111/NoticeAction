@@ -1,0 +1,28 @@
+[Unit]
+Description=NoticeAction 通知行动台
+Documentation=https://github.com/xiaosongxiaosong1111/NoticeAction
+After=network.target
+
+[Service]
+Type=simple
+User=notice
+Group=notice
+WorkingDirectory=/opt/noticeaction
+EnvironmentFile=/etc/noticeaction.env
+Environment=PATH=/opt/node22/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/opt/node22/bin/node server.mjs
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

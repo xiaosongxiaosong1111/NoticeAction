@@ -8,9 +8,14 @@
 面向 TextIn xParse「文档觉醒」AI 应用创新赛的可运行作品。
 
 ![Node.js 22+](https://img.shields.io/badge/Node.js-22%2B-2f855a?style=flat-square&logo=nodedotjs&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-71%20passed-0f766e?style=flat-square)
-![Coverage](https://img.shields.io/badge/line%20coverage-98.20%25-f0b44d?style=flat-square)
-![Local First](https://img.shields.io/badge/privacy-local--first-244c42?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-72%20passed-0f766e?style=flat-square)
+![Coverage](https://img.shields.io/badge/line%20coverage-98.02%25-f0b44d?style=flat-square)
+![Deployment](https://img.shields.io/badge/deployment-local%20%2B%20online-244c42?style=flat-square)
+
+### [🚀 立即在线体验](https://47.120.19.14:8084/)
+
+公网演示已在服务端配置 TextIn xParse，访问者无需注册、登录或填写 AppID / Secret Code。<br>
+上传真实文件会调用 TextIn 解析，请优先使用脱敏、非敏感材料；活动历史仅保存在当前浏览器。
 
 </div>
 
@@ -65,7 +70,7 @@ flowchart LR
 | 增量追加 | 清单生成后可继续上传补充通知，只重新分析新增材料并与基线比对 |
 | 可追溯证据 | 每项结论保留文件名、页码、元素 ID 和必要原文片段 |
 | 可执行交付 | 生成按时间排序的行动清单，并导出标准日历文件 |
-| 本地优先 | 服务仅监听本机；原文件、完整解析文档和供应商原始响应不持久化 |
+| 双模式运行 | 默认在 Windows 本机运行，也提供开箱即用的 HTTPS 公网演示；应用均不持久化原文件、完整解析文档和供应商原始响应 |
 
 ### 历史活动可以继续追加
 
@@ -75,7 +80,15 @@ flowchart LR
 
 ![通知依据](artifacts/screenshots/05-evidence-desktop.png)
 
-## 30 秒跑起来
+## 在线体验
+
+直接打开 **[https://47.120.19.14:8084/](https://47.120.19.14:8084/)**：
+
+1. 点击 **“30 秒体验研学示例”**，无需上传文件即可走完完整流程；或点击 **“新建整理”** 上传自己的脱敏材料。
+2. 公网演示的解析凭据由服务器安全注入，浏览器不会获得 AppID / Secret Code，也无需用户配置。
+3. 当前为公开竞赛演示，所有访问者共享解析额度；请勿上传机密文件或无权处理的个人信息。
+
+## 本地 30 秒启动
 
 > 环境要求：Windows 10/11，Node.js 22 或更高版本。项目没有第三方运行依赖，无需 `npm install`。
 
@@ -98,7 +111,7 @@ http://127.0.0.1:43173
 npm start
 ```
 
-## 使用真实 TextIn xParse
+## 本地配置 TextIn xParse
 
 1. 打开右上角 **“解析设置”**。
 2. 输入 TextIn `AppID` 和 `Secret Code`，点击 **“保存并启用”**。
@@ -136,7 +149,7 @@ npm start
 ```mermaid
 flowchart LR
     A[本机通知文件] --> B[浏览器页面]
-    B --> C[127.0.0.1 本地 Node 服务]
+    B --> C[本地或公网 Node 服务]
     C -->|仅解析时上传| D[TextIn xParse]
     D --> E[脱敏与字段归一化]
     E --> F[变化确认与规则合并]
@@ -146,7 +159,8 @@ flowchart LR
 ```
 
 - 单文件上限 10 MiB，同一活动最多 20 份；仅接受 `.pdf`、`.xlsx`、`.png`、`.jpg`、`.jpeg`。
-- 服务只监听 `127.0.0.1`，并拒绝非本机 Host、跨站 Origin 和可绕过预检的简单上传类型。
+- 本地模式只监听 `127.0.0.1`；公网模式由 Nginx 提供 HTTPS，并仅放行已配置的 Host。两种模式都会拒绝跨站 Origin 和可绕过预检的简单上传类型。
+- 公网模式通过服务器环境变量读取 TextIn 凭据，前端接口只返回“是否已配置”，不回显凭据内容。
 - 历史只保存最终精简计划及必要证据，可逐条删除、一键清空或清理站点数据。
 - 当前会话可以直接追加文件；刷新页面后完整解析正文已被清除，因此继续比对时必须按提示重传历史原材料。
 - 上传真实材料前请移除不必要的姓名、联系方式等个人信息，并确认拥有处理权限。
@@ -163,9 +177,12 @@ NoticeAction/
 ├─ static/                    # 零框架前端与增量整理逻辑
 ├─ samples/                   # 虚构演示材料和脱敏解析快照
 ├─ tests/                     # 单元、集成与边界测试
+├─ deploy/                    # systemd、Nginx 与 HTTPS 部署配置
 ├─ scripts/browser-smoke.mjs # 浏览器关键流程与截图
 └─ artifacts/screenshots/    # README 与参赛展示截图
 ```
+
+服务器部署、证书续期与运维命令见 [`deploy/README.md`](deploy/README.md)。
 
 ## 验证
 
@@ -177,11 +194,11 @@ npm run coverage
 npm run e2e
 ```
 
-当前基线：**71 项测试通过，行覆盖率 98.20%**。浏览器流程还会校验首次指引、示例隔离、文件追加、未保存内容保护、键盘焦点、移动端触控尺寸、历史清理和日历导出。
+当前基线：**72 项测试通过，行覆盖率 98.02%**。浏览器流程还会校验首次指引、示例隔离、文件追加、未保存内容保护、键盘焦点、移动端触控尺寸、历史清理和日历导出。
 
 ## 当前边界
 
-这是一个可本地运行、可现场演示的完整单用户系统，不是只有静态页面的概念 Demo。当前语义规则聚焦学校研学通知，不宣称覆盖所有学校与所有文书写法；也暂不包含账号、多用户同步、数据库和公网托管。扩展为正式产品时，还需要更多真实脱敏样本评测、通用结构化抽取和服务端身份认证。
+这是一个可本地运行、也可直接在线体验的完整单用户系统，不是只有静态页面的概念 Demo。当前语义规则聚焦学校研学通知，不宣称覆盖所有学校与所有文书写法；暂不包含账号、多用户同步和数据库。公网地址是无登录的竞赛演示，访问者共享 TextIn 额度，不应直接作为生产服务。扩展为正式产品时，还需要更多真实脱敏样本评测、通用结构化抽取、服务端身份认证和用户级配额控制。
 
 ---
 
@@ -189,6 +206,6 @@ npm run e2e
 
 **让通知不止被读懂，更真正变成下一步行动。**
 
-Built with TextIn xParse · Local-first by design
+Built with TextIn xParse · Local-first, online-ready
 
 </div>

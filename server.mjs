@@ -18,6 +18,7 @@ const STATIC_FILES = new Map([
 const ALLOWED_EXTENSIONS = new Set(['.pdf', '.xlsx', '.png', '.jpg', '.jpeg']);
 const DEFAULT_FILE_LIMIT = 10 * 1024 * 1024;
 const DEFAULT_JSON_LIMIT = 20 * 1024 * 1024;
+const DEFAULT_ALLOWED_HOSTS = Object.freeze(['127.0.0.1', 'localhost']);
 const CREDENTIAL_JSON_LIMIT = 4 * 1024;
 const CREDENTIAL_MANAGEMENT_VERSION = 1;
 const SERVICE_ID = 'notice-action-local-v1';
@@ -106,16 +107,41 @@ function mediaType(request) {
   return String(request.headers['content-type'] ?? '').split(';', 1)[0].trim().toLowerCase();
 }
 
-function assertLocalApiRequest(request, url) {
+function normalizeHostname(value) {
+  let host = String(value ?? '').trim().toLowerCase();
+  if (!host) return '';
+  if (host.startsWith('[')) {
+    const end = host.indexOf(']');
+    return end > 0 ? host.slice(0, end + 1) : '';
+  }
+  const colon = host.indexOf(':');
+  if (colon >= 0) host = host.slice(0, colon);
+  return host.replace(/\.$/u, '');
+}
+
+function parseAllowedHosts(value) {
+  const entries = String(value ?? '')
+    .split(',')
+    .map((entry) => normalizeHostname(entry))
+    .filter(Boolean);
+  return new Set([...DEFAULT_ALLOWED_HOSTS, ...entries]);
+}
+
+function assertLocalApiRequest(request, url, allowedHosts) {
   if (!url.pathname.startsWith('/api/')) return;
-  const host = String(request.headers.host ?? '').toLowerCase();
-  if (!/^(?:127\.0\.0\.1|localhost)(?::\d{1,5})?$/.test(host)) throw new MergeError('仅允许从本机访问接口', 403);
+  const requestHost = String(request.headers.host ?? '').trim().toLowerCase();
+  const hostname = normalizeHostname(requestHost);
+  if (!hostname || !allowedHosts.has(hostname)) throw new MergeError('仅允许来自已授权主机的访问', 403);
 
   const origin = request.headers.origin;
   if (origin) {
     let originUrl;
     try { originUrl = new URL(origin); } catch { throw new MergeError('拒绝跨站请求', 403); }
-    if (originUrl.protocol !== 'http:' || originUrl.host.toLowerCase() !== host) throw new MergeError('拒绝跨站请求', 403);
+    const forwardedProtocol = String(request.headers['x-forwarded-proto'] ?? '').split(',', 1)[0].trim().toLowerCase();
+    const requestProtocol = forwardedProtocol || (request.socket.encrypted ? 'https' : 'http');
+    if (!['http', 'https'].includes(requestProtocol) || originUrl.protocol !== `${requestProtocol}:` || originUrl.host.toLowerCase() !== requestHost) {
+      throw new MergeError('拒绝跨站请求', 403);
+    }
   }
   const fetchSite = String(request.headers['sec-fetch-site'] ?? '').toLowerCase();
   if (fetchSite && fetchSite !== 'same-origin' && fetchSite !== 'none') throw new MergeError('拒绝跨站请求', 403);
@@ -178,6 +204,7 @@ export function createAppServer({
   xparseClient = parseFile,
   fileLimit = DEFAULT_FILE_LIMIT,
   jsonLimit = DEFAULT_JSON_LIMIT,
+  allowedHosts = parseAllowedHosts(env.ALLOWED_HOSTS),
 } = {}) {
   const startingCredentials = internalCredentials(initialCredentials) ?? internalCredentials({
     appId: env.TEXTIN_APP_ID,
@@ -199,7 +226,7 @@ export function createAppServer({
   return createServer(async (request, response) => {
     const url = new URL(request.url, 'http://localhost');
     try {
-      assertLocalApiRequest(request, url);
+      assertLocalApiRequest(request, url, allowedHosts);
       if (request.method === 'GET' && STATIC_FILES.has(url.pathname)) {
         sendStatic(response, url.pathname);
         return;
@@ -290,6 +317,9 @@ export function createAppServer({
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const portFlag = process.argv.indexOf('--port');
   const port = Number(portFlag >= 0 ? process.argv[portFlag + 1] : process.env.PORT || 43173);
+  const hostFlag = process.argv.indexOf('--host');
+  const host = String(hostFlag >= 0 ? process.argv[hostFlag + 1] : process.env.HOST || '127.0.0.1').trim() || '127.0.0.1';
+  const allowedHosts = parseAllowedHosts(process.env.ALLOWED_HOSTS);
   const credentialStore = process.platform === 'win32' ? createCredentialStore() : null;
   const environmentCredentials = internalCredentials({
     appId: process.env.TEXTIN_APP_ID,
@@ -307,9 +337,11 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       console.warn('Windows 加密凭据未能读取，请在页面中重新配置');
     }
   }
-  const server = createAppServer({ credentialStore, initialCredentials, credentialsSaved, credentialStorageError });
-  server.listen(port, '127.0.0.1', () => {
-    console.log(`通知清单已启动：http://127.0.0.1:${port}`);
+  const server = createAppServer({ credentialStore, initialCredentials, credentialsSaved, credentialStorageError, allowedHosts });
+  server.listen(port, host, () => {
+    const displayHost = host === '0.0.0.0' || host === '::' ? '127.0.0.1' : host;
+    console.log(`通知清单已启动：http://${displayHost}:${port}`);
+    console.log(`允许的访问主机：${[...allowedHosts].join(', ')}`);
     console.log(initialCredentials ? '实时 xParse：已配置' : '实时 xParse：未配置，可在页面中设置');
   });
 }

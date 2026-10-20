@@ -19,6 +19,17 @@ async function withServer(options, run) {
   }
 }
 
+function statusWithHeaders(url, headers) {
+  return new Promise((resolve, reject) => {
+    const request = httpRequest(url, { headers }, (response) => {
+      response.resume();
+      resolve(response.statusCode);
+    });
+    request.on('error', reject);
+    request.end();
+  });
+}
+
 test('serves health and the competition demo without credentials', async () => {
   await withServer({ demoDocuments: documents, env: {} }, async (origin) => {
     const health = await fetch(`${origin}/api/health`).then((response) => response.json());
@@ -374,6 +385,37 @@ test('rejects cross-site, rebound host, and simple-content requests before xPars
     });
     assert.equal(simpleMerge.status, 415);
     assert.equal(calls, 0);
+  });
+});
+
+test('allows configured public hosts while keeping loopback as the default', async () => {
+  await withServer({ demoDocuments: documents, env: {} }, async (origin) => {
+    assert.equal(await statusWithHeaders(`${origin}/api/health`, { host: '47.120.19.14:8084' }), 403);
+  });
+
+  await withServer({ demoDocuments: documents, env: { ALLOWED_HOSTS: '47.120.19.14' } }, async (origin) => {
+    assert.equal(await statusWithHeaders(`${origin}/api/health`, { host: '47.120.19.14:8084' }), 200);
+    assert.equal(await statusWithHeaders(`${origin}/api/health`, { host: '127.0.0.1:43173' }), 200);
+    assert.equal(await statusWithHeaders(`${origin}/api/health`, {
+      host: '47.120.19.14:8084',
+      origin: 'https://47.120.19.14:8084',
+      'x-forwarded-proto': 'https',
+    }), 200);
+    assert.equal(await statusWithHeaders(`${origin}/api/health`, {
+      host: '47.120.19.14:8084',
+      origin: 'https://47.120.19.14:9999',
+      'x-forwarded-proto': 'https',
+    }), 403);
+    assert.equal(await statusWithHeaders(`${origin}/api/health`, {
+      host: '47.120.19.14:8084',
+      origin: 'http://47.120.19.14:8084',
+      'x-forwarded-proto': 'https',
+    }), 403);
+    assert.equal(await statusWithHeaders(`${origin}/api/health`, {
+      host: '47.120.19.14:8084',
+      origin: 'https://attacker.example',
+    }), 403);
+    assert.equal(await statusWithHeaders(`${origin}/api/health`, { host: 'other.example' }), 403);
   });
 });
 

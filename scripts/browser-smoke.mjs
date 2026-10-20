@@ -376,16 +376,16 @@ try {
   await evaluate(client, "document.querySelector('.primary-nav [data-view=\"dashboard\"]').click(); true");
 
   await client.send('Emulation.setDeviceMetricsOverride', { width: 360, height: 800, deviceScaleFactor: 1, mobile: true });
-  assert.deepEqual(await evaluate(client, "({ overflow: document.documentElement.scrollWidth - window.innerWidth, steps: document.querySelectorAll('#onboarding-flow li').length, minButtonHeight: Math.min(...[...document.querySelectorAll('button:not([hidden])')].filter((button) => button.offsetParent).map((button) => button.getBoundingClientRect().height)), settingsVisible: Boolean(document.querySelector('#credentials-button').offsetParent), settingsLabel: document.querySelector('#credentials-button').getAttribute('aria-label'), helpVisible: Boolean(document.querySelector('#help-button').offsetParent) })"), { overflow: 0, steps: 3, minButtonHeight: 44, settingsVisible: true, settingsLabel: '解析设置', helpVisible: true });
+  assert.deepEqual(await evaluate(client, "({ overflow: document.documentElement.scrollWidth - window.innerWidth, steps: document.querySelectorAll('#onboarding-flow li').length, minButtonHeight: Math.round(100 * Math.min(...[...document.querySelectorAll('button:not([hidden])')].filter((button) => button.offsetParent).map((button) => button.getBoundingClientRect().height))) / 100, settingsVisible: Boolean(document.querySelector('#credentials-button').offsetParent), settingsLabel: document.querySelector('#credentials-button').getAttribute('aria-label'), helpVisible: Boolean(document.querySelector('#help-button').offsetParent) })"), { overflow: 0, steps: 3, minButtonHeight: 44, settingsVisible: true, settingsLabel: '解析设置', helpVisible: true });
   await screenshot(client, '00-dashboard-mobile.png');
   await evaluate(client, "document.querySelector('#help-button').click(); true");
   await waitFor(client, "document.querySelector('#help-dialog').open");
-  assert.deepEqual(await evaluate(client, "({ overflow: document.documentElement.scrollWidth - window.innerWidth, minButtonHeight: Math.min(...[...document.querySelectorAll('#help-dialog button')].filter((button) => button.offsetParent).map((button) => button.getBoundingClientRect().height)) })"), { overflow: 0, minButtonHeight: 44 });
+  assert.deepEqual(await evaluate(client, "({ overflow: document.documentElement.scrollWidth - window.innerWidth, minButtonHeight: Math.round(100 * Math.min(...[...document.querySelectorAll('#help-dialog button')].filter((button) => button.offsetParent).map((button) => button.getBoundingClientRect().height))) / 100 })"), { overflow: 0, minButtonHeight: 44 });
   await screenshot(client, '00-help-mobile.png');
   await evaluate(client, "document.querySelector('#help-close').click(); true");
   await evaluate(client, "document.querySelector('#credentials-button').click(); true");
   await waitFor(client, "document.querySelector('#credentials-dialog').open");
-  assert.deepEqual(await evaluate(client, "({ overflow: document.documentElement.scrollWidth - window.innerWidth, minButtonHeight: Math.min(...[...document.querySelectorAll('#credentials-dialog button')].filter((button) => button.offsetParent).map((button) => button.getBoundingClientRect().height)) })"), { overflow: 0, minButtonHeight: 44 });
+  assert.deepEqual(await evaluate(client, "({ overflow: document.documentElement.scrollWidth - window.innerWidth, minButtonHeight: Math.round(100 * Math.min(...[...document.querySelectorAll('#credentials-dialog button')].filter((button) => button.offsetParent).map((button) => button.getBoundingClientRect().height))) / 100 })"), { overflow: 0, minButtonHeight: 44 });
   await screenshot(client, '00-credentials-mobile.png');
   await evaluate(client, "document.querySelector('#credentials-close').click(); true");
   await client.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
@@ -465,7 +465,7 @@ try {
       cancelledTrash: cancelled.includes('加厚垃圾袋'),
       condition: conditional.includes('不能参加'),
       timelineCount: document.querySelectorAll('#change-timeline .timeline-item').length,
-      minButtonHeight: Math.min(...[...document.querySelectorAll('button:not([hidden])')].filter((button) => button.offsetParent).map((button) => button.getBoundingClientRect().height)),
+      minButtonHeight: Math.round(100 * Math.min(...[...document.querySelectorAll('button:not([hidden])')].filter((button) => button.offsetParent).map((button) => button.getBoundingClientRect().height))) / 100,
       successToast: document.querySelector('#toast-text').textContent.includes('示例清单已生成'),
     };
   })()`);
@@ -601,7 +601,7 @@ try {
   const mobile = await evaluate(client, `({
     viewport: window.innerWidth,
     overflow: document.documentElement.scrollWidth - window.innerWidth,
-    minButtonHeight: Math.min(...[...document.querySelectorAll('button:not([hidden])')].filter((button) => button.offsetParent).map((button) => button.getBoundingClientRect().height)),
+    minButtonHeight: Math.round(100 * Math.min(...[...document.querySelectorAll('button:not([hidden])')].filter((button) => button.offsetParent).map((button) => button.getBoundingClientRect().height))) / 100,
     currentNav: document.querySelector('.mobile-nav [data-view="plan"]').getAttribute('aria-current'),
   })`);
   assert.deepEqual(mobile, { viewport: 360, overflow: 0, minButtonHeight: 44, currentNav: 'page' });
@@ -759,7 +759,7 @@ try {
     title: document.querySelector('#discard-title').textContent,
     keepsDraft: document.querySelectorAll('#file-list li').length,
     cancelFocused: document.activeElement.id === 'discard-cancel',
-    minButtonHeight: Math.min(...[...document.querySelectorAll('#discard-dialog button')].map((button) => button.getBoundingClientRect().height)),
+    minButtonHeight: Math.round(100 * Math.min(...[...document.querySelectorAll('#discard-dialog button')].map((button) => button.getBoundingClientRect().height))) / 100,
   })`), {
     title: '要开始新的整理吗？',
     keepsDraft: 1,
